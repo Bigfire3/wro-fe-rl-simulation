@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# Webots
+*/controllers/*/*.pyc
+*/controllers/*/build/
+*/controllers/*/*.exe
+*/controllers/*/*.bak
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WRO SLAM – Live Map</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: rgba(20, 20, 32, 0.75);
+            --border: rgba(255, 255, 255, 0.06);
+            --text-primary: #e8e8ef;
+            --text-secondary: #8888a0;
+            --text-dim: #555568;
+            --accent: #6c5ce7;
+            --accent-glow: rgba(108, 92, 231, 0.3);
+            --green: #00e676;
+            --green-dim: rgba(0, 230, 118, 0.15);
+            --red: #ff5252;
+            --red-dim: rgba(255, 82, 82, 0.15);
+            --cyan: #18ffff;
+            --cyan-dim: rgba(24, 255, 255, 0.12);
+            --orange: #ffab40;
+            --radius: 12px;
+            --radius-sm: 8px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+        }
+
+        /* ---------- SIDEBAR ---------- */
+        .sidebar {
+            width: 300px;
+            min-width: 300px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            gap: 16px;
+            overflow-y: auto;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent), #a29bfe);
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            box-shadow: 0 4px 15px var(--accent-glow);
+        }
+
+        .logo h1 {
+            font-size: 16px;
+            font-weight: 600;
+            letter-spacing: -0.3px;
+        }
+
+        .logo span {
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
+        /* Status badge */
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .status-badge.connected {
+            background: var(--green-dim);
+            color: var(--green);
+            border: 1px solid rgba(0, 230, 118, 0.2);
+        }
+
+        .status-badge.disconnected {
+            background: var(--red-dim);
+            color: var(--red);
+            border: 1px solid rgba(255, 82, 82, 0.2);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .connected .status-dot { background: var(--green); }
+        .disconnected .status-dot { background: var(--red); animation: none; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        /* Info cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 14px;
+            backdrop-filter: blur(10px);
+        }
+
+        .card-title {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--text-dim);
+            margin-bottom: 10px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .stat-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .stat-value.accent { color: var(--accent); }
+        .stat-value.green { color: var(--green); }
+        .stat-value.cyan { color: var(--cyan); }
+        .stat-value.orange { color: var(--orange); }
+
+        /* Legend */
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: auto;
+        }
+
+        .btn {
+            padding: 10px 16px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            background: rgba(108, 92, 231, 0.15);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .btn:active { transform: scale(0.97); }
+
+        /* Slider */
+        .slider-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .slider-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+        }
+
+        .slider-header span:first-child { color: var(--text-secondary); }
+        .slider-header span:last-child {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-primary);
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 4px;
+            border-radius: 2px;
+            background: rgba(255,255,255,0.08);
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            box-shadow: 0 0 8px var(--accent-glow);
+        }
+
+        /* ---------- MAP AREA ---------- */
+        .map-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at 50% 50%, rgba(108, 92, 231, 0.03) 0%, transparent 70%),
+                var(--bg-primary);
+        }
+
+        canvas {
+            image-rendering: pixelated;
+            cursor: grab;
+            border-radius: 4px;
+        }
+
+        canvas:active { cursor: grabbing; }
+
+        /* Grid info overlay */
+        .overlay-info {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .overlay-tag {
+            padding: 6px 12px;
+            background: rgba(10, 10, 15, 0.8);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* Zoom indicator */
+        .zoom-controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .zoom-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: rgba(10, 10, 15, 0.85);
+            backdrop-filter: blur(10px);
+            color: var(--text-primary);
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .zoom-btn:hover {
+            background: rgba(108, 92, 231, 0.2);
+            border-color: var(--accent);
+        }
+
+        /* Watermark */
+        .watermark {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            font-size: 10px;
+            color: var(--text-dim);
+            font-weight: 400;
+            letter-spacing: 0.5px;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="logo">
+            <div class="logo-icon">🗺️</div>
+            <div>
+                <h1>SLAM Viewer</h1>
+                <span>WRO Future Engineers</span>
+            </div>
+        </div>
+
+        <div id="statusBadge" class="status-badge disconnected">
+            <div class="status-dot"></div>
+            <span id="statusText">Verbindung wird aufgebaut…</span>
+        </div>
+
+        <!-- Lap counter -->
+        <div class="card" style="text-align: center; padding: 18px;">
+            <div class="card-title">Runden</div>
+            <div id="lapCount" style="font-family: 'JetBrains Mono', monospace; font-size: 42px; font-weight: 700; color: var(--accent); line-height: 1; margin: 4px 0 8px;">0 / 3</div>
+            <div style="height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden;">
+                <div id="lapBar" style="height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), #a29bfe); border-radius: 2px; transition: width 0.5s ease;"></div>
+            </div>
+        </div>
+
+        <!-- Section info -->
+        <div class="card">
+            <div class="card-title">Aktueller Abschnitt</div>
+            <div class="stat-row">
+                <span class="stat-label">Sektion</span>
+                <span id="statSection" class="stat-value accent">—</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Typ</span>
+                <span id="statSectionType" class="stat-value">—</span>
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="card">
+            <div class="card-title">Roboter</div>
+            <div class="stat-row">
+                <span class="stat-label">Position (Grid)</span>
+                <span id="statPos" class="stat-value accent">— , —</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Trajektorie-Punkte</span>
+                <span id="statTraj" class="stat-value green">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">LiDAR-Punkte</span>
+                <span id="statLidar" class="stat-value cyan">0</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Karte</div>
+            <div class="stat-row">
+                <span class="stat-label">Grid-Größe</span>
+                <span id="statGrid" class="stat-value">300 × 300</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Belegte Zellen</span>
+                <span id="statOcc" class="stat-value orange">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Update-Rate</span>
+                <span id="statFps" class="stat-value">— fps</span>
+            </div>
+        </div>
+
+        <!-- Legend -->
+        <div class="card">
+            <div class="card-title">Legende</div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #00e676;"></div>
+                Roboter-Position
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #6c5ce7;"></div>
+                Trajektorie
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #ff5252; opacity:0.7;"></div>
+                LiDAR-Punkte
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #1e1e28; border: 1px solid rgba(255,255,255,0.15);"></div>
+                Belegt (Wand)
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #dce1e6;"></div>
+                Frei (befahrbar)
+            </div>
+        </div>
+
+        <!-- Display options -->
+        <div class="card">
+            <div class="card-title">Anzeige</div>
+            <div class="slider-group">
+                <div class="slider-header">
+                    <span>Zoom</span>
+                    <span id="zoomLabel">2.0×</span>
+                </div>
+                <input type="range" id="zoomSlider" min="0.5" max="6" step="0.1" value="2.0">
+            </div>
+
+            <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px;">
+                <label class="legend-item" style="cursor: pointer;">
+                    <input type="checkbox" id="showTrajectory" checked style="accent-color: var(--accent);">
+                    Trajektorie anzeigen
+                </label>
+                <label class="legend-item" style="cursor: pointer;">
+                    <input type="checkbox" id="showLidar" checked style="accent-color: var(--accent);">
+                    LiDAR-Punkte anzeigen
+                </label>
+                <label class="legend-item" style="cursor: pointer;">
+                    <input type="checkbox" id="followRobot" checked style="accent-color: var(--accent);">
+                    Roboter verfolgen
+                </label>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="controls">
+            <button class="btn" onclick="resetView()">⟲ Ansicht zurücksetzen</button>
+        </div>
+    </aside>
+
+    <!-- Map Canvas -->
+    <main class="map-container">
+        <canvas id="mapCanvas"></canvas>
+
+        <div class="overlay-info">
+            <div class="overlay-tag" id="overlayZoom">Zoom: 2.0×</div>
+            <div class="overlay-tag" id="overlayTime">—</div>
+        </div>
+
+        <div class="zoom-controls">
+            <button class="zoom-btn" onclick="zoomIn()">+</button>
+            <button class="zoom-btn" onclick="zoomOut()">−</button>
+        </div>
+
+        <div class="watermark">WRO FE SLAM · Echtzeit-Kartierung</div>
+    </main>
+
+    <script>
+        // ========== CONFIG ==========
+        const WS_URL = `ws://${location.hostname || 'localhost'}:8765`;
+        const RECONNECT_DELAY = 2000;
+
+        // ========== STATE ==========
+        let ws = null;
+        let mapImage = null;             // offscreen image for the PNG map
+        let currentState = null;
+        let zoom = 2.0;
+        let panX = 0, panY = 0;
+        let isDragging = false;
+        let dragStartX, dragStartY;
+        let lastFrameTime = 0;
+        let frameCount = 0;
+        let fps = 0;
+
+        // ========== CANVAS SETUP ==========
+        const canvas = document.getElementById('mapCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            render();
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // ========== WEBSOCKET ==========
+        function connect() {
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                setStatus(true);
+            };
+
+            ws.onclose = () => {
+                setStatus(false);
+                setTimeout(connect, RECONNECT_DELAY);
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    currentState = data;
+
+                    // Decode base64 PNG into Image
+                    const img = new Image();
+                    img.onload = () => {
+                        mapImage = img;
+                        render();
+                    };
+                    img.src = 'data:image/png;base64,' + data.map;
+
+                    // Update stats
+                    updateStats(data);
+
+                    // FPS counter
+                    frameCount++;
+                    const now = performance.now();
+                    if (now - lastFrameTime > 1000) {
+                        fps = frameCount;
+                        frameCount = 0;
+                        lastFrameTime = now;
+                    }
+                } catch (e) {
+                    console.error('Parse error:', e);
+                }
+            };
+        }
+
+        function setStatus(connected) {
+            const badge = document.getElementById('statusBadge');
+            const text = document.getElementById('statusText');
+            if (connected) {
+                badge.className = 'status-badge connected';
+                text.textContent = 'Verbunden';
+            } else {
+                badge.className = 'status-badge disconnected';
+                text.textContent = 'Getrennt – Verbinde erneut…';
+            }
+        }
+
+        // ========== RENDERING ==========
+        function render() {
+            const w = canvas.width;
+            const h = canvas.height;
+
+            // Clear
+            ctx.fillStyle = '#0a0a0f';
+            ctx.fillRect(0, 0, w, h);
+
+            if (!mapImage || !currentState) {
+                // Draw waiting message
+                ctx.fillStyle = '#555568';
+                ctx.font = '14px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Warte auf SLAM-Daten…', w / 2, h / 2);
+                return;
+            }
+
+            const gs = currentState.grid_size || 300;
+            const scale = zoom;
+
+            // Center on robot if following
+            let offsetX = panX;
+            let offsetY = panY;
+
+            if (document.getElementById('followRobot').checked) {
+                offsetX = w / 2 - currentState.robot_gx * scale;
+                offsetY = h / 2 - currentState.robot_gy * scale;
+            }
+
+            ctx.save();
+            ctx.translate(offsetX, offsetY);
+            ctx.scale(scale, scale);
+
+            // Draw subtle grid lines
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
+            ctx.lineWidth = 0.5 / scale;
+            const gridStep = 50;  // every 50 cells = 1m
+            for (let i = 0; i <= gs; i += gridStep) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, gs); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(gs, i); ctx.stroke();
+            }
+
+            // Draw map image
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(mapImage, 0, 0, gs, gs);
+
+            // Draw section overlays
+            if (currentState.sections) {
+                for (const sec of currentState.sections) {
+                    const sx = Math.min(sec.gx1, sec.gx2);
+                    const sy = Math.min(sec.gy1, sec.gy2);
+                    const sw = Math.abs(sec.gx2 - sec.gx1);
+                    const sh = Math.abs(sec.gy2 - sec.gy1);
+                    const isActive = sec.name === currentState.section_name;
+                    // Highlight active section
+                    if (isActive) {
+                        ctx.fillStyle = sec.type === 'corner' ? 'rgba(255, 171, 64, 0.10)' : 'rgba(108, 92, 231, 0.10)';
+                        ctx.fillRect(sx, sy, sw, sh);
+                    }
+                    // Section border
+                    ctx.strokeStyle = isActive ? 'rgba(108, 92, 231, 0.5)' : 'rgba(255,255,255,0.04)';
+                    ctx.lineWidth = (isActive ? 1.5 : 0.5) / scale;
+                    ctx.strokeRect(sx, sy, sw, sh);
+                    // Section label
+                    if (scale > 1.2) {
+                        ctx.fillStyle = isActive ? 'rgba(108,92,231,0.8)' : 'rgba(255,255,255,0.12)';
+                        ctx.font = `${Math.max(6, 10 / scale)}px Inter, sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText(sec.name, sx + sw / 2, sy + sh / 2 + 3 / scale);
+                    }
+                }
+            }
+
+            // Draw trajectory
+            if (document.getElementById('showTrajectory').checked && currentState.trajectory && currentState.trajectory.length > 1) {
+                ctx.beginPath();
+                ctx.strokeStyle = 'rgba(108, 92, 231, 0.6)';
+                ctx.lineWidth = 1.5 / scale;
+                ctx.lineJoin = 'round';
+                const t = currentState.trajectory;
+                ctx.moveTo(t[0][0], t[0][1]);
+                for (let i = 1; i < t.length; i++) {
+                    ctx.lineTo(t[i][0], t[i][1]);
+                }
+                ctx.stroke();
+            }
+
+            // Draw LiDAR points
+            if (document.getElementById('showLidar').checked && currentState.lidar_points) {
+                ctx.fillStyle = 'rgba(255, 82, 82, 0.5)';
+                const r = 1.2 / scale;
+                for (const p of currentState.lidar_points) {
+                    ctx.beginPath();
+                    ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // Draw robot
+            const rx = currentState.robot_gx;
+            const ry = currentState.robot_gy;
+
+            // Glow
+            const grd = ctx.createRadialGradient(rx, ry, 0, rx, ry, 8 / scale);
+            grd.addColorStop(0, 'rgba(0, 230, 118, 0.25)');
+            grd.addColorStop(1, 'rgba(0, 230, 118, 0)');
+            ctx.fillStyle = grd;
+            ctx.beginPath();
+            ctx.arc(rx, ry, 8 / scale, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Robot dot
+            ctx.fillStyle = '#00e676';
+            ctx.beginPath();
+            ctx.arc(rx, ry, 3 / scale, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Border ring
+            ctx.strokeStyle = 'rgba(0, 230, 118, 0.6)';
+            ctx.lineWidth = 0.8 / scale;
+            ctx.beginPath();
+            ctx.arc(rx, ry, 5 / scale, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Heading arrow
+            if (currentState.robot_yaw !== undefined) {
+                const yaw = currentState.robot_yaw;
+                const arrowLen = 10 / scale;
+                ctx.strokeStyle = '#00e676';
+                ctx.lineWidth = 1.2 / scale;
+                ctx.beginPath();
+                ctx.moveTo(rx, ry);
+                ctx.lineTo(rx + arrowLen * Math.cos(yaw), ry - arrowLen * Math.sin(yaw));
+                ctx.stroke();
+            }
+
+            ctx.restore();
+
+            // Update overlay
+            document.getElementById('overlayZoom').textContent = `Zoom: ${zoom.toFixed(1)}×`;
+            document.getElementById('overlayTime').textContent = new Date().toLocaleTimeString('de-DE');
+        }
+
+        function updateStats(data) {
+            document.getElementById('statPos').textContent =
+                `${data.robot_gx}, ${data.robot_gy}`;
+            document.getElementById('statTraj').textContent =
+                data.trajectory ? data.trajectory.length : 0;
+            document.getElementById('statLidar').textContent =
+                data.lidar_points ? data.lidar_points.length : 0;
+            document.getElementById('statGrid').textContent =
+                `${data.grid_size} × ${data.grid_size}`;
+            document.getElementById('statOcc').textContent = data.occupied_cells || 0;
+            document.getElementById('statFps').textContent = `${fps} fps`;
+
+            // Section & Lap
+            const laps = data.lap_count || 0;
+            document.getElementById('lapCount').textContent = `${laps} / 3`;
+            document.getElementById('lapBar').style.width = `${Math.min(100, (laps / 3) * 100)}%`;
+            if (laps >= 3) {
+                document.getElementById('lapCount').style.color = 'var(--green)';
+                document.getElementById('lapBar').style.background = 'var(--green)';
+            }
+            document.getElementById('statSection').textContent = data.section_name || '—';
+            const typeMap = { 'straight': '↕ Gerade', 'corner': '↩ Kurve' };
+            document.getElementById('statSectionType').textContent = typeMap[data.section_type] || data.section_type || '—';
+        }
+
+        // ========== INTERACTION ==========
+        // Zoom with scroll
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -0.2 : 0.2;
+            zoom = Math.max(0.5, Math.min(6, zoom + delta));
+            document.getElementById('zoomSlider').value = zoom;
+            document.getElementById('zoomLabel').textContent = zoom.toFixed(1) + '×';
+            // Disable follow when manually zooming/panning
+            document.getElementById('followRobot').checked = true;
+            render();
+        });
+
+        // Pan with drag
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            dragStartX = e.clientX - panX;
+            dragStartY = e.clientY - panY;
+            document.getElementById('followRobot').checked = false;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            panX = e.clientX - dragStartX;
+            panY = e.clientY - dragStartY;
+            render();
+        });
+
+        canvas.addEventListener('mouseup', () => { isDragging = false; });
+        canvas.addEventListener('mouseleave', () => { isDragging = false; });
+
+        // Zoom slider
+        document.getElementById('zoomSlider').addEventListener('input', (e) => {
+            zoom = parseFloat(e.target.value);
+            document.getElementById('zoomLabel').textContent = zoom.toFixed(1) + '×';
+            render();
+        });
+
+        // Toggle checkboxes
+        document.getElementById('showTrajectory').addEventListener('change', render);
+        document.getElementById('showLidar').addEventListener('change', render);
+        document.getElementById('followRobot').addEventListener('change', render);
+
+        function zoomIn() {
+            zoom = Math.min(6, zoom + 0.3);
+            document.getElementById('zoomSlider').value = zoom;
+            document.getElementById('zoomLabel').textContent = zoom.toFixed(1) + '×';
+            render();
+        }
+
+        function zoomOut() {
+            zoom = Math.max(0.5, zoom - 0.3);
+            document.getElementById('zoomSlider').value = zoom;
+            document.getElementById('zoomLabel').textContent = zoom.toFixed(1) + '×';
+            render();
+        }
+
+        function resetView() {
+            zoom = 2.0;
+            panX = 0;
+            panY = 0;
+            document.getElementById('zoomSlider').value = zoom;
+            document.getElementById('zoomLabel').textContent = '2.0×';
+            document.getElementById('followRobot').checked = true;
+            render();
+        }
+
+        // ========== INIT ==========
+        connect();
+    </script>
+</body>
+</html>
