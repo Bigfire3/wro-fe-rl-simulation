@@ -148,27 +148,45 @@ def run_estimation(localizer, sensor_data):
                     avg_ranges = np.nanmean(scans_arr, axis=0)
                 avg_ranges = np.nan_to_num(avg_ranges, nan=0.0)
 
-                # Kalibrierungsvisualisierung und interaktive Freigabe
-                tpl_img = localizer.project_lidar_to_template(ranges=avg_ranges, yaw=0.0)
+                # Kalibrierung über das Template Matching durchführen
                 try:
-                    cv2.imshow("Calibration Reference Map", ref_img)
-                    cv2.imshow("Calibration LiDAR Template", tpl_img)
-                    print("[Calibration] Displaying Reference and Template. Press any key in the CV window to start driving...")
+                    # n_rays und Winkelberechnung
+                    n_rays = len(avg_ranges)
+                    angle_inc = -2.0 * math.pi / n_rays if n_rays > 0 else 0.0
+                    angle_offset = math.pi / 2 # 90 Grad Rotation entsprechend update()
+                    
+                    x_init, y_init, yaw_init, direction, debug_img = localizer.calibrate_initial_pose(
+                        avg_ranges=avg_ranges,
+                        angle_offset=angle_offset,
+                        angle_inc=angle_inc
+                    )
+                    
+                    # Ergebnis anzeigen und blockieren
+                    cv2.imshow("Calibration Result", debug_img)
+                    print(f"[Calibration] Best candidate found at: x={x_init:.3f}m, y={y_init:.3f}m, yaw={yaw_init:.3f} rad ({math.degrees(yaw_init):.1f}°)")
+                    print(f"[Calibration] Resolved driving direction: {direction}")
+                    print("[Calibration] Press any key in the 'Calibration Result' CV window to start driving...")
                     cv2.waitKey(0)
+                    
+                    # Initial-Pose setzen
+                    localizer.set_initial_pose(x_init, y_init, yaw_init)
+                    robot_x, robot_y, robot_yaw = x_init, y_init, yaw_init
+                    
+                    initial_pose_found = True
+                    driving_direction = direction
+                    
                 except Exception as e:
-                    print(f"[Calibration] OpenCV window error: {e}")
+                    print(f"[Calibration] Error during calibration: {e}")
+                    # Fallback auf Standardwerte bei Fehler
+                    localizer.set_initial_pose(1.5, 0.5, 0.0)
+                    robot_x, robot_y, robot_yaw = 1.5, 0.5, 0.0
+                    initial_pose_found = True
+                    driving_direction = "CCW"
                 finally:
-                    for win_name in ["Calibration Reference Map", "Calibration LiDAR Template"]:
-                        try:
-                            cv2.destroyWindow(win_name)
-                        except Exception:
-                            pass
-                
-                # Bestimmen der Initialwerte und Richtung (Platzhalter-Logik)
-                # Später wird dies über die Template-Matching-Suche in opencv_localizer erfolgen.
-                initial_pose_found = True
-                driving_direction = "CCW"  # Standardmäßig CCW
-                print(f"[Estimation] Initial position found! Direction: {driving_direction}")
+                    try:
+                        cv2.destroyWindow("Calibration Result")
+                    except Exception:
+                        pass
         else:
             robot_x, robot_y, robot_yaw = localizer.update(
                 lidar_ranges=lidar_ranges,

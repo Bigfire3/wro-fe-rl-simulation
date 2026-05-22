@@ -172,3 +172,170 @@ class OpenCVLocalizer:
                 
         return img
 
+    def set_initial_pose(self, x, y, yaw):
+        """
+        Sets the initial pose of the robot.
+        """
+        self.X_real = x
+        self.Y_real = y
+        self.yaw_real = yaw
+
+    def calibrate_initial_pose(self, avg_ranges, angle_offset, angle_inc, padding=2.0):
+        """
+        Performs rotation-invariant template matching using an image pyramid / coarse-to-fine search.
+        Resolves the 4-fold symmetry using the South corridor constraint (y < 1.1m).
+        Determines driving direction (CW/CCW) from the final yaw.
+        
+        Returns:
+            (float, float, float, str, np.ndarray): (x_init, y_init, yaw_init, direction, debug_img)
+        """
+        ref_img = self.create_arena_reference_image(padding=padding)
+        img_size = ref_img.shape[0]
+        
+        # 1. Generate 0-deg template image
+        tpl_0 = self.project_lidar_to_template(avg_ranges, yaw=0.0)
+        
+        cx = self.window_size / 2.0
+        cy = self.window_size / 2.0
+        
+        # 2. Coarse Search (pyramid level: downsampled by 4)
+        downsample = 4
+        cx_coarse = cx / downsample
+        cy_coarse = cy / downsample
+        
+        ref_coarse = cv2.resize(ref_img, (0, 0), fx=1.0/downsample, fy=1.0/downsample, interpolation=cv2.INTER_AREA)
+        tpl_coarse_0 = cv2.resize(tpl_0, (0, 0), fx=1.0/downsample, fy=1.0/downsample, interpolation=cv2.INTER_AREA)
+        
+        coarse_results = []
+        
+        # Rotate from 0 to 359 degrees in steps of 2 degrees
+        for angle_deg in range(0, 360, 2):
+            M = cv2.getRotationMatrix2D((cx_coarse, cy_coarse), angle_deg, 1.0)
+            tpl_coarse_rot = cv2.warpAffine(tpl_coarse_0, M, (tpl_coarse_0.shape[1], tpl_coarse_0.shape[0]))
+            
+            # Match template
+            res = cv2.matchTemplate(ref_coarse, tpl_coarse_rot, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            coarse_results.append((max_val, max_loc, angle_deg))
+            
+        # Find top candidates that are distinct in orientation (> 20 deg apart)
+        coarse_results = sorted(coarse_results, key=lambda x: x[0], reverse=True)
+        candidates = []
+        for score, loc, angle in coarse_results:
+            if all(abs((angle - c[2] + 180) % 360 - 180) > 20 for c in candidates):
+                candidates.append((score, loc, angle))
+                if len(candidates) >= 6:
+                    break
+                    
+        # 3. Fine Search (original resolution, around candidates)
+        refined_candidates = []
+        delta = 12 # search range in pixels (+/- 12 px)
+        
+        for score, loc_coarse, angle_coarse in candidates:
+            fine_tx_est = loc_coarse[0] * downsample
+            fine_ty_est = loc_coarse[1] * downsample
+            
+            # Crop search region from reference image to speed up matching
+            x_start = max(0, fine_tx_est - delta)
+            y_start = max(0, fine_ty_est - delta)
+            x_end = min(ref_img.shape[1], fine_tx_est + self.window_size + delta)
+            y_end = min(ref_img.shape[0], fine_ty_est + self.window_size + delta)
+            
+            ref_crop = ref_img[y_start:y_end, x_start:x_end]
+            
+            best_fine_score = -1.0
+            best_fine_loc = (0, 0)
+            best_fine_angle = angle_coarse
+            
+            # Search angles around angle_coarse (+/- 4 degrees in 1 degree steps)
+            for fine_angle in range(angle_coarse - 4, angle_coarse + 5):
+                angle_deg = fine_angle % 360
+                M = cv2.getRotationMatrix2D((cx, cy), angle_deg, 1.0)
+                tpl_rot = cv2.warpAffine(tpl_0, M, (self.window_size, self.window_size))
+                
+                # Check crop bounds validity
+                if ref_crop.shape[0] < self.window_size or ref_crop.shape[1] < self.window_size:
+                    continue
+                    
+                res = cv2.matchTemplate(ref_crop, tpl_rot, cv2.TM_CCOEFF_NORMED)
+                _, max_val_fine, _, max_loc_fine = cv2.minMaxLoc(res)
+                
+                if max_val_fine > best_fine_score:
+                    best_fine_score = max_val_fine
+                    best_fine_loc = (x_start + max_loc_fine[0], y_start + max_loc_fine[1])
+                    best_fine_angle = angle_deg
+                    
+            refined_candidates.append((best_fine_score, best_fine_loc, best_fine_angle))
+            
+        # Convert candidate positions to real world and filter by South corridor
+        valid_candidates = []
+        for score, loc, angle in refined_candidates:
+            tx, ty = loc
+            rx_px = tx + cx
+            ry_px = ty + cy
+            
+            x_real = rx_px / self.scale - padding
+            y_real = (img_size - ry_px) / self.scale - padding
+            
+            # Convert angle_deg (image CCW rotation) to robot yaw
+            yaw_init = -angle * math.pi / 180.0
+            # Normalize yaw to [-pi, pi]
+            yaw_init = (yaw_init + math.pi) % (2.0 * math.pi) - math.pi
+            
+            # Add candidate
+            valid_candidates.append((score, x_real, y_real, yaw_init, angle, loc))
+            
+        # Filter for South corridor (y_real < 1.1)
+        south_candidates = [c for c in valid_candidates if c[1] >= 0.0 and c[2] >= 0.0 and c[2] < 1.1]
+        
+        # If no candidate satisfies y < 1.1, fall back to best global
+        if not south_candidates:
+            print("[Calibration] WARNING: No candidate found in South corridor (y < 1.1m)! Falling back to best global match.")
+            south_candidates = sorted(valid_candidates, key=lambda x: x[0], reverse=True)
+        else:
+            south_candidates = sorted(south_candidates, key=lambda x: x[0], reverse=True)
+            
+        best_candidate = south_candidates[0]
+        score, x_init, y_init, yaw_init, best_angle_deg, best_loc = best_candidate
+        
+        # Determine driving direction:
+        sin_yaw = math.sin(yaw_init)
+        if sin_yaw > 0 or (abs(sin_yaw) < 1e-5 and yaw_init >= 0):
+            direction = "CCW"
+        else:
+            direction = "CW"
+            
+        # Generate debug visualization image
+        debug_img = self.draw_calibration_result(ref_img, tpl_0, best_loc[0], best_loc[1], best_angle_deg)
+        
+        return x_init, y_init, yaw_init, direction, debug_img
+
+    def draw_calibration_result(self, ref_img, tpl_img, tx, ty, angle_deg):
+        """
+        Creates a color visualization of the template matching result.
+        """
+        vis = cv2.cvtColor(ref_img, cv2.COLOR_GRAY2BGR)
+        
+        cx = self.window_size / 2.0
+        cy = self.window_size / 2.0
+        M = cv2.getRotationMatrix2D((cx, cy), angle_deg, 1.0)
+        tpl_rot = cv2.warpAffine(tpl_img, M, (self.window_size, self.window_size))
+        
+        ys, xs = np.where(tpl_rot > 0)
+        h_vis, w_vis = vis.shape[:2]
+        
+        for y, x in zip(ys, xs):
+            px = tx + x
+            py = ty + y
+            if 0 <= px < w_vis and 0 <= py < h_vis:
+                vis[py, px] = [0, 255, 0] # Green points for LiDAR template overlay
+                
+        # Draw a circle representing the robot's center
+        rx_px = int(tx + cx)
+        ry_px = int(ty + cy)
+        if 0 <= rx_px < w_vis and 0 <= ry_px < h_vis:
+            cv2.circle(vis, (rx_px, ry_px), 8, (0, 0, 255), -1) # Red circle for robot center
+            
+        return vis
+
+
