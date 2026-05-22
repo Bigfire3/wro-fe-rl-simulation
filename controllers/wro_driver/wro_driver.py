@@ -15,6 +15,7 @@ import time
 import warnings
 import numpy as np
 import cv2
+# pyrefly: ignore [missing-import]
 from controller import Robot
 from opencv_localizer import OpenCVLocalizer
 

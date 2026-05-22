@@ -88,7 +88,6 @@ Aktiver Betriebsmodus auf der Strecke. Kapselt und führt die Sub-State Machine 
 
 **Outputs:**
 - Soll-Lenkwinkel und Soll-Geschwindigkeit für die Regelung (Stage 4)
-- Aktualisiertes Belegungsgitter (Occupancy Grid)
 
 **Exit Conditions:**
 - Ziellinie erkannt und 3 Runden absolviert (Wechsel zu `COMPLETED`)
@@ -133,16 +132,14 @@ Notaus-Zustand bei schwerwiegenden Fehlern, um Beschädigungen des Roboters oder
 ### STATE: EXPLORE (Sub-State von RUNNING)
 
 **Purpose:**
-Erkundung der Rennstrecke zur Hinderniserkennung und automatischen Kartografierung des Streckenlayouts (Belegungsgitter).
+Durchfahren der Rennstrecke mittels Wandverfolgung und Ausweichmanövern.
 
 **Inputs:**
 - Aktuelle Pose `(x_real, y_real, yaw_real)`
-- Lokales Belegungsgitter
 - LiDAR-Distanzen
 
 **Outputs:**
-- Erkundungs-Soll-Trajektorie (Geschwindigkeits- und Lenkvorgaben für Wandfolgemodus und Hindernisumfahrung)
-- Aktualisierte globale Karte
+- Soll-Trajektorie (Geschwindigkeits- und Lenkvorgaben für Wandfolgemodus und Hindernisumfahrung)
 
 **Exit Conditions:**
 - Ziel/Ende der Mission nach 3 Runden erkannt (Wechsel zu `COMPLETED`)
