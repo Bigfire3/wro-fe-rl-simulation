@@ -3,26 +3,36 @@ WRO Future Engineers – Webots Controller
 =========================================
 Wall-follower using Lidar and IMU with manual Ackermann calculation.
 Includes real-time SLAM occupancy grid mapping with live browser viewer.
+Refactored to follow a strict 4-Stage Software Pipeline:
+- Stage 1: Perception
+- Stage 2: Estimation
+- Stage 3: Planning (Hierarchical State Machine)
+- Stage 4: Control
 """
 
 import math
 import time
+import warnings
 import numpy as np
 import cv2
 from controller import Robot
-from estimation import OpenCVLocalizer
+from opencv_localizer import OpenCVLocalizer
 
 # --- configuration ---
 TIME_STEP = 32            # ms
-TARGET_SPEED = 5.0       # rad/s (speed of the wheels)
-WHEELBASE = 0.14           # m
+TARGET_SPEED = 5.0        # rad/s (speed of the wheels)
+WHEELBASE = 0.14          # m
 TRACK_FRONT = 0.12        # m
 WHEEL_RADIUS = 0.03       # m (tireRadius from .wbt)
 
 # --- PID configuration ---
 P_GAIN = 1.5
 D_GAIN = 3.0
-MAX_STEERING = 0.9        # rad
+MAX_STEERING = 0.8        # rad
+
+# --- Helper ---
+def clamp(value, min_val, max_val):
+    return max(min_val, min(max_val, value))
 
 # --- Ackermann helper ---
 def ackermann_angles(target_angle):
@@ -67,171 +77,237 @@ steer_right = robot.getDevice("right_steer")
 
 def set_steering_angle(target_angle):
     left, right = ackermann_angles(target_angle)
+    # Begrenzung auf die physikalischen Grenzen der Webots-Servos mit MAX_STEERING
+    left = clamp(left, -MAX_STEERING, MAX_STEERING)
+    right = clamp(right, -MAX_STEERING, MAX_STEERING)
     steer_left.setPosition(left)
     steer_right.setPosition(right)
 
 # --- initialise OpenCV localizer ---
 localizer = OpenCVLocalizer()
 
-# --- pose estimation state ---
-# Start exactly in the middle of the South section in strictly positive space (X=1.5, Y=0.5)
+# --- state variables ---
 robot_x = 1.5
 robot_y = 0.5
 robot_yaw = 0.0
 
-state = "WAIT_FOR_LIDAR"
-ref_img = localizer.create_arena_reference_image()
+state = "STOP"
+initial_pose_found = False
+driving_direction = None
 collected_scans = []
-
-# --- main loop ---
 prev_error = 0.0
+smoothed_steering = 0.0
+
+# Generate reference image for calibration
+ref_img = localizer.create_arena_reference_image()
+
+# --- STAGE 1: PERCEPTION ---
+def run_perception(robot, lidar, imu, camera):
+    """
+    Stage 1: Wahrnehmung.
+    Liest Sensordaten aus und bereitet sie in einem standardisierten Format auf.
+    Enthält KEINE Zustandslogik.
+    """
+    lidar_data = lidar.getRangeImage()
+    if lidar_data is None:
+        lidar_data = []
+        
+    try:
+        rpy = imu.getRollPitchYaw()
+        imu_yaw = rpy[2] if rpy else 0.0
+    except Exception:
+        imu_yaw = 0.0
+        
+    return {
+        "lidar_ranges": lidar_data,
+        "imu_yaw": imu_yaw
+    }
+
+# --- STAGE 2: ESTIMATION ---
+def run_estimation(localizer, sensor_data):
+    """
+    Stage 2: Zustandsschätzung.
+    Aktualisiert die geschätzte Roboterpose (x, y, yaw) und das Belegungsgitter.
+    Enthält KEINE Zustandslogik der State Machine, führt aber die einmalige
+    Initial-Lokalisierung (Kalibrierung) durch.
+    """
+    global robot_x, robot_y, robot_yaw, initial_pose_found, driving_direction, collected_scans
+    
+    lidar_ranges = sensor_data["lidar_ranges"]
+    if len(lidar_ranges) > 0:
+        if not initial_pose_found:
+            collected_scans.append(lidar_ranges)
+            if len(collected_scans) >= 10:
+                scans_arr = np.array(collected_scans)
+                # Ungültige Werte ausfiltern
+                invalid_mask = (scans_arr <= 0.01) | (scans_arr >= 2.0) | np.isinf(scans_arr) | np.isnan(scans_arr)
+                scans_arr[invalid_mask] = np.nan
+                
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=RuntimeWarning)
+                    avg_ranges = np.nanmean(scans_arr, axis=0)
+                avg_ranges = np.nan_to_num(avg_ranges, nan=0.0)
+
+                # Kalibrierungsvisualisierung und interaktive Freigabe
+                tpl_img = localizer.project_lidar_to_template(ranges=avg_ranges, yaw=0.0)
+                try:
+                    cv2.imshow("Calibration Reference Map", ref_img)
+                    cv2.imshow("Calibration LiDAR Template", tpl_img)
+                    print("[Calibration] Displaying Reference and Template. Press any key in the CV window to start driving...")
+                    cv2.waitKey(0)
+                except Exception as e:
+                    print(f"[Calibration] OpenCV window error: {e}")
+                finally:
+                    for win_name in ["Calibration Reference Map", "Calibration LiDAR Template"]:
+                        try:
+                            cv2.destroyWindow(win_name)
+                        except Exception:
+                            pass
+                
+                # Bestimmen der Initialwerte und Richtung (Platzhalter-Logik)
+                # Später wird dies über die Template-Matching-Suche in opencv_localizer erfolgen.
+                initial_pose_found = True
+                driving_direction = "CCW"  # Standardmäßig CCW
+                print(f"[Estimation] Initial position found! Direction: {driving_direction}")
+        else:
+            robot_x, robot_y, robot_yaw = localizer.update(
+                lidar_ranges=lidar_ranges,
+                max_range=2.0,
+                angle_offset=math.pi / 2  # 90 Grad Rotation
+            )
+            
+    return robot_x, robot_y, robot_yaw
+
+# --- STAGE 3: PLANNING (State Machine) ---
+def run_planning(pose, sensor_data):
+    """
+    Stage 3: Pfadplanung & Verhaltenssteuerung.
+    Verarbeitet Zustandsübergänge der State Machine und berechnet den Soll-Pfad
+    sowie die Soll-Geschwindigkeit und den Soll-Lenkwinkel.
+    """
+    global state, prev_error
+    
+    target_speed = 0.0
+    target_steering = 0.0
+    
+    lidar_data = sensor_data["lidar_ranges"]
+    
+    if state == "STOP":
+        # Warten bis die initiale Lokalisierung abgeschlossen ist
+        if initial_pose_found:
+            print(f"[State Machine] STOP -> RUNNING (Start sub: EXPLORE in direction {driving_direction})")
+            state = "RUNNING"
+            
+    elif state == "RUNNING":
+        # Fehlerprüfung (Sensorverlust)
+        if len(lidar_data) == 0:
+            print("[State Machine] Kritischer Fehler! Kein LiDAR-Signal im RUNNING-Zustand.")
+            state = "ERROR"
+            return 0.0, 0.0
+            
+        # sub: EXPLORE - Wandverfolgung & Hindernisvermeidung
+        target_speed = TARGET_SPEED
+        
+        def cap(dist):
+            return min(dist, 1.5)
+
+        # Distanzen ermitteln: 90=Links, 270=Rechts, 180=Vorne, 135=Vorne-Links, 225=Vorne-Rechts
+        right_dist = cap(lidar_data[270])
+        left_dist = cap(lidar_data[90])
+        front_dist = lidar_data[180]
+        front_right_dist = cap(lidar_data[225])
+        front_left_dist = cap(lidar_data[135])
+        
+        # 1. Zentrierung & Parallelfahrt (PD-Regler)
+        current_diff = left_dist - right_dist
+        derivative = current_diff - prev_error
+        prev_error = current_diff
+        
+        raw_steering = -(P_GAIN * current_diff + D_GAIN * derivative)
+        
+        # 2. Seitenwandschutz (Sicherheitsabstand min. 20cm)
+        min_side = min(left_dist, right_dist)
+        if min_side < 0.2:
+            safety_force = (0.2 - min_side) * 5.0 
+            if left_dist < right_dist:
+                raw_steering += safety_force  # Nach rechts lenken
+            else:
+                raw_steering -= safety_force  # Nach links lenken
+        
+        # 3. Kurvenfahrt / Frontwand-Ausweichmanöver
+        if front_dist < 1.0:
+            corner_force = (1.0 - front_dist)**2
+            CORNER_GAIN = 8.0 
+            
+            if front_left_dist > front_right_dist:
+                raw_steering -= (corner_force * CORNER_GAIN)   # Links lenken
+            else:
+                raw_steering += (corner_force * CORNER_GAIN)   # Rechts lenken
+        
+        # Begrenzung des Lenkwinkels
+        target_steering = clamp(raw_steering, -MAX_STEERING, MAX_STEERING)
+        
+    elif state == "COMPLETED":
+        target_speed = 0.0
+        target_steering = 0.0
+        
+    elif state == "ERROR":
+        target_speed = 0.0
+        target_steering = 0.0
+        
+    return target_speed, target_steering
+
+# --- STAGE 4: CONTROL ---
+def run_control(target_speed, target_steering):
+    """
+    Stage 4: Regelung.
+    Rechnet Soll-Vorgaben in reale Aktuatorsignale um (Ackermann, PID, Filter).
+    Enthält KEINE übergeordnete Zustandslogik.
+    """
+    global smoothed_steering
+    
+    # 1. Tiefpassfilter auf den Lenkwinkel anwenden
+    smoothed_steering = smoothed_steering + 0.5 * (target_steering - smoothed_steering)
+    
+    # 2. Dynamische Geschwindigkeitsanpassung basierend auf dem Lenkwinkel
+    speed_factor = 1.0 - (abs(smoothed_steering) / MAX_STEERING) * 0.3
+    speed = target_speed * max(0.7, speed_factor)
+    
+    # Motoren ansteuern
+    motor_right.setVelocity(speed)
+    motor_left.setVelocity(speed)
+    
+    # Lenkung einstellen
+    set_steering_angle(smoothed_steering)
+
+# --- MAIN LOOP ---
 step_count = 0
 
 while robot.step(TIME_STEP) != -1:
     step_count += 1
-    lidar_data = lidar.getRangeImage()
+    
+    # Optionale waitKey Behandlung zur Vermeidung von OpenCV-Hängern
     try:
         cv2.waitKey(1)
     except Exception:
         pass
+        
+    # --- 1. STAGE 1: PERCEPTION ---
+    sensor_data = run_perception(robot, lidar, imu, camera)
     
-    match state:
-        case "WAIT_FOR_LIDAR":
-            motor_left.setVelocity(0.0)
-            motor_right.setVelocity(0.0)
-            steer_left.setPosition(0.0)
-            steer_right.setPosition(0.0)
-            
-            if lidar_data and len(lidar_data) > 0:
-                state = "CALCULATE_INITIAL_POSITION"
-                
-        case "CALCULATE_INITIAL_POSITION":
-            motor_left.setVelocity(0.0)
-            motor_right.setVelocity(0.0)
-            steer_left.setPosition(0.0)
-            steer_right.setPosition(0.0)
-            
-            if lidar_data and len(lidar_data) > 0:
-                collected_scans.append(lidar_data)
-                if len(collected_scans) >= 10:
-                    scans_arr = np.array(collected_scans)
-                    # Filter out invalid values by marking them as NaN
-                    invalid_mask = (scans_arr <= 0.01) | (scans_arr >= 2.0) | np.isinf(scans_arr) | np.isnan(scans_arr)
-                    scans_arr[invalid_mask] = np.nan
-                    
-                    import warnings
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore", category=RuntimeWarning)
-                        avg_ranges = np.nanmean(scans_arr, axis=0)
-                    avg_ranges = np.nan_to_num(avg_ranges, nan=0.0)
-
-                    tpl_img = localizer.project_lidar_to_template(
-                        ranges=avg_ranges,
-                        yaw=0.0
-                    )
-                    try:
-                        cv2.imshow("Calibration Reference Map", ref_img)
-                        cv2.imshow("Calibration LiDAR Template", tpl_img)
-                        print("[Calibration] Displaying Reference and Template. Press any key in the CV window to start driving...")
-                        cv2.waitKey(0)
-                    except Exception as e:
-                        print(f"[Calibration] OpenCV window error: {e}")
-                    finally:
-                        for win_name in ["Calibration Reference Map", "Calibration LiDAR Template"]:
-                            try:
-                                cv2.destroyWindow(win_name)
-                            except Exception:
-                                pass
-                    
-                    state = "DRIVE"
-                    
-        case "DRIVE":
-            # --- Stage 1: Warmup (0s - 1s) ---
-            # Stay still
-            if robot.getTime() < 1.0:
-                motor_left.setVelocity(0.0)
-                motor_right.setVelocity(0.0)
-                steer_left.setPosition(0.0)
-                steer_right.setPosition(0.0)
-            else:
-                # --- Stage 2: Estimation Update ---
-                if lidar_data:
-                    robot_x, robot_y, robot_yaw = localizer.update(
-                        lidar_ranges=lidar_data,
-                        max_range=2.0,
-                        angle_offset=math.pi / 2 # Rotated by 180 degrees
-                    )
-
-                # --- Stage 3: Driving ---
-                speed = TARGET_SPEED
-                steering_angle = 0.0
-
-                if lidar_data:
-                    # Helper to ignore values too far away (e.g. open track sections)
-                    def cap(dist):
-                        return min(dist, 1.5)
-
-                    # Distances: 0=Back, 180=Front
-                    # With angle_offset=pi and negative angle_inc:
-                    # 90 is +90 deg (Left), 270 is -90 deg (Right)
-                    # 135 is +45 deg (Front-Left), 225 is -45 deg (Front-Right)
-                    right_dist = cap(lidar_data[270])
-                    left_dist = cap(lidar_data[90])
-                    front_dist = lidar_data[180]
-                    front_right_dist = cap(lidar_data[225])
-                    front_left_dist = cap(lidar_data[135])
-                    
-                    # 1. Centering and Parallel Driving
-                    # P_GAIN keeps it centered, D_GAIN keeps it parallel
-                    current_diff = left_dist - right_dist
-                    derivative = current_diff - prev_error
-                    
-                    # Invert: More room on Left -> Steer LEFT (negative)
-                    raw_steering = -(P_GAIN * current_diff + D_GAIN * derivative)
-                    
-                    # 2. Side Wall Safety (Minimum distance 10cm)
-                    min_side = min(left_dist, right_dist)
-                    if min_side < 0.2:
-                        safety_force = (0.2 - min_side) * 5.0 
-                        if left_dist < right_dist:
-                            raw_steering += safety_force  # Push away from LEFT (steer Right)
-                        else:
-                            raw_steering -= safety_force  # Push away from RIGHT (steer Left)
-                    
-                    # 3. Cornering (Front Wall Avoidance)
-                    if front_dist < 1.0:
-                        corner_force = (1.0 - front_dist)**2
-                        CORNER_GAIN = 8.0 
-                        
-                        # Use diagonals to decide steering (adaptive)
-                        if front_left_dist > front_right_dist:
-                            raw_steering -= (corner_force * CORNER_GAIN)   # Steer LEFT (negative)
-                        else:
-                            raw_steering += (corner_force * CORNER_GAIN)   # Steer RIGHT (positive)
-                    
-                    # Clamp raw steering angle
-                    raw_steering = max(-MAX_STEERING, min(MAX_STEERING, raw_steering))
-                    
-                    # 4. Low-Pass Filter (Smooths out sudden spikes)
-                    steering_angle = steering_angle + 0.5 * (raw_steering - steering_angle)
-                    
-                    prev_error = current_diff
-                    
-                    # 5. Dynamic Speed Control
-                    speed_factor = 1.0 - (abs(steering_angle) / MAX_STEERING) * 0.3
-                    speed = TARGET_SPEED * max(0.7, speed_factor)
-
-                    # --- Live OpenCV Visualization ---
-                    vis_img = localizer.render()
-                    try:
-                        cv2.imshow("WRO Localization", vis_img)
-                        cv2.waitKey(1)
-                    except Exception:
-                        pass
-
-                # Drive rear wheels
-                motor_right.setVelocity(speed)
-                motor_left.setVelocity(speed)
-
-                # Apply steering
-                set_steering_angle(steering_angle)
+    # --- 2. STAGE 2: ESTIMATION ---
+    robot_pose = run_estimation(localizer, sensor_data)
+    
+    # --- 3. STAGE 3: PLANNING ---
+    target_speed, target_steering = run_planning(robot_pose, sensor_data)
+    
+    # --- 4. STAGE 4: CONTROL ---
+    run_control(target_speed, target_steering)
+    
+    # --- Live OpenCV Visualisierung ---
+    if len(sensor_data["lidar_ranges"]) > 0:
+        vis_img = localizer.render()
+        try:
+            cv2.imshow("WRO Localization", vis_img)
+        except Exception:
+            pass
