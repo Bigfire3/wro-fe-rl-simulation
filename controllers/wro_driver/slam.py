@@ -99,6 +99,11 @@ class KnownMapLocalizer:
         # Position correction
         self._correction_alpha = 0.3   # blend factor for correction
 
+        # Dynamic Obstacle Memory
+        # Dictionary mapping grid cells (gx, gy) to confidence value [0.0, 1.0]
+        self.obstacles = {}
+        self.obstacle_resolution = 0.05 # 5cm grid for obstacles
+
     # ------------------------------------------------------------------
     # Pre-fill the known map
     # ------------------------------------------------------------------
@@ -124,16 +129,94 @@ class KnownMapLocalizer:
                max_range=3.0, angle_offset=-math.pi):
         """
         Update localization with one LiDAR scan.
-
-        Returns corrected (robot_x, robot_y).
         """
         n_rays = len(lidar_ranges)
         # Reversed sign for horizontal mirroring
         angle_inc = -2.0 * math.pi / n_rays
 
+        # --- 1. South-Fixed Start Alignment (Only on first call) ---
+        if not hasattr(self, '_initialized') or not self._initialized:
+            n_rays = len(lidar_ranges)
+            angle_inc = -2.0 * math.pi / n_rays
+            
+            # 1. Parallel alignment (Tilt detection)
+            tilt = self._detect_initial_yaw_at(lidar_ranges, 0.0, -1.0, 0.0, n_rays, angle_inc, angle_offset)
+            
+            # 2. Geometric Intersection Logic (User's Circle Idea)
+            R_TEST = 1.0
+                 # 3. Decision & Tentative Mode
+            self._direction_locked = False
+            # During init, we assume start center (0, -1) for visualization
+            intersections_left = self._count_intersections(lidar_ranges, angle_inc, angle_offset, True, 0.0, -1.0, 0.0 - tilt)
+            intersections_right = self._count_intersections(lidar_ranges, angle_inc, angle_offset, False, 0.0, -1.0, 0.0 - tilt)
+            
+            print(f"[Localizer] Circle Intersections (R={R_TEST}m): Left={intersections_left}, Right={intersections_right}")
+
+            if intersections_left < intersections_right:
+                # Left side is shorter (Inner) -> Facing EAST (CCW)
+                print("[Localizer] Init: CCW (East) confirmed by intersection count.")
+                base_yaw = 0.0
+                ty = -1.5 + lidar_ranges[270]
+                self._direction_locked = True
+            elif intersections_right < intersections_left:
+                # Right side is shorter (Inner) -> Facing WEST (CW)
+                print("[Localizer] Init: Eindeutig CW (West).")
+                base_yaw = math.pi
+                ty = -1.5 + lidar_ranges[90]
+                self._direction_locked = True
+            else:
+                # AMBIGUOUS (4 Points) -> Start tentative CCW
+                print("[Localizer] Init: AMBIGUOUS (4 Points). Starting TENTATIVE CCW...")
+                base_yaw = 0.0
+                ty = -1.5 + lidar_ranges[270]
+                self._direction_locked = False
+
+            corrected_x = 0.0 
+            corrected_y = ty
+            corrected_yaw = base_yaw - tilt
+            
+            self._initialized = True
+            self.robot_x = corrected_x
+            self.robot_y = corrected_y
+            self.robot_yaw = corrected_yaw
+            self.trajectory = [(corrected_x, corrected_y)]
+            return corrected_x, corrected_y, corrected_yaw
+
+        # Reset debug visualizations
+        self.debug_intersections = []
+
+        # Reset debug visualizations
+        self.debug_intersections = []
+
+        # --- 2. Live Re-Validation (if tentative) ---
+        if not self._direction_locked:
+            intersections_left = self._count_intersections(lidar_ranges, angle_inc, angle_offset, True, robot_x, robot_y, robot_yaw)
+            intersections_right = self._count_intersections(lidar_ranges, angle_inc, angle_offset, False, robot_x, robot_y, robot_yaw)
+            
+            if intersections_left != intersections_right:
+                # DECISION TIME!
+                print(f"[Localizer] Tentative phase ended. Left={intersections_left}, Right={intersections_right}")
+                
+                # Check if our tentative CCW was wrong
+                should_be_cw = (intersections_right < intersections_left)
+                if should_be_cw:
+                    print("[Localizer] CRITICAL FLIP: Tentative direction was WRONG. Flipping to CW.")
+                    # Flip current pose
+                    robot_x = -robot_x # Mirror X relative to start (0,0)
+                    robot_yaw = (robot_yaw + math.pi + np.pi) % (2 * np.pi) - np.pi
+                    # Transform whole trajectory
+                    self.trajectory = [(-tx, ty) for tx, ty in self.trajectory]
+                else:
+                    print("[Localizer] Tentative direction CONFIRMED.")
+                
+                self._direction_locked = True
+
+        # Save latest position for rendering
+        self.robot_x = robot_x
+        self.robot_y = robot_y
         self.robot_yaw = robot_yaw
 
-        # --- Position correction using known wall distances (ICP) ---
+        # --- 3. Normal Position/Yaw correction ---
         corrected_x, corrected_y, corrected_yaw = self._correct_position(
             lidar_ranges, robot_x, robot_y, robot_yaw, imu_yaw,
             n_rays, angle_inc, angle_offset
@@ -148,91 +231,340 @@ class KnownMapLocalizer:
         if len(self.trajectory) > 5000:
             self.trajectory = self.trajectory[-5000:]
 
-        # Compute LiDAR endpoints for visualization (use corrected yaw)
-        lidar_pts = []
-        for i, r in enumerate(lidar_ranges):
-            if r <= 0.01 or r > max_range or math.isinf(r) or math.isnan(r):
-                continue
-            angle = corrected_yaw + angle_offset + i * angle_inc
-            ex = corrected_x + r * math.cos(angle)
-            ey = corrected_y + r * math.sin(angle)
-            lidar_pts.append((ex, ey))
+        # Compute LiDAR endpoints and classify them (Obstacle vs. Wall)
+        ranges = np.array(lidar_ranges)
+        valid = (ranges > 0.01) & (ranges < max_range) & ~np.isinf(ranges) & ~np.isnan(ranges)
+        if np.any(valid):
+            ray_angles = corrected_yaw + angle_offset + np.arange(n_rays)[valid] * angle_inc
+            pts = np.stack([corrected_x + ranges[valid] * np.cos(ray_angles),
+                            corrected_y + ranges[valid] * np.sin(ray_angles)], axis=1)
 
-        self.last_lidar_points = lidar_pts
+            # Expected walls (Manhattan grid)
+            segments = [
+                ([-1.5, -1.5], [ 1.5, -1.5]), ([-1.5,  1.5], [ 1.5,  1.5]),
+                ([-1.5, -1.5], [-1.5,  1.5]), ([ 1.5, -1.5], [ 1.5,  1.5]),
+                ([-0.5, -0.5], [ 0.5, -0.5]), ([-0.5,  0.5], [ 0.5,  0.5]),
+                ([-0.5, -0.5], [-0.5,  0.5]), ([ 0.5, -0.5], [ 0.5,  0.5]),
+            ]
+            
+            min_dists = np.full(len(pts), 1e6)
+            for A_raw, B_raw in segments:
+                A, B = np.array(A_raw), np.array(B_raw)
+                v = B - A
+                w = pts - A
+                v_len_sq = np.sum(v * v)
+                t = np.sum(w * v, axis=1) / v_len_sq
+                
+                closest_on_line = A + t[:, None] * v
+                dist_to_line_sq = np.sum((closest_on_line - pts)**2, axis=1)
+                
+                out_of_bounds = np.maximum(0, -t) + np.maximum(0, t - 1)
+                penalty = out_of_bounds * 5.0
+                
+                dists = np.sqrt(dist_to_line_sq) + penalty
+                min_dists = np.minimum(min_dists, dists)
+
+            # Filter threshold: >5cm from expected wall = Obstacle
+            is_obstacle = min_dists > 0.05
+            obstacle_pts = pts[is_obstacle]
+            wall_pts = pts[~is_obstacle]
+        else:
+            obstacle_pts = np.empty((0, 2))
+            wall_pts = np.empty((0, 2))
+
+        # Update Obstacle Memory (Persistence focus)
+        decay_rate = 0.005 # Much slower decay
+        keys_to_delete = []
+        for key in self.obstacles:
+            # Only decay if the robot is VERY close to the spot (within 1.0m)
+            # This ensures obstacles stay on the map when the robot is far away.
+            owx = key[0] * self.obstacle_resolution
+            owy = key[1] * self.obstacle_resolution
+            dist_to_robot = math.hypot(owx - corrected_x, owy - corrected_y)
+            
+            if dist_to_robot < 1.0: # Only decay if nearby
+                self.obstacles[key] -= decay_rate
+                if self.obstacles[key] <= 0:
+                    keys_to_delete.append(key)
+        for key in keys_to_delete:
+            del self.obstacles[key]
+
+        for ox, oy in obstacle_pts:
+            gx = int(round(ox / self.obstacle_resolution))
+            gy = int(round(oy / self.obstacle_resolution))
+            key = (gx, gy)
+            self.obstacles[key] = min(1.0, self.obstacles.get(key, 0.0) + 0.2)
+
+        self.last_lidar_points = wall_pts
+        # Store ALL valid lidar points (wall + obstacle) for raw overlay
+        if np.any(valid):
+            self.last_all_lidar_points = pts.tolist()
+        else:
+            self.last_all_lidar_points = []
 
         self._update_section(corrected_x, corrected_y)
 
         return corrected_x, corrected_y, corrected_yaw
 
-    def render(self, window_size=600):
+    def _count_intersections(self, lidar_ranges, angle_inc, angle_offset, is_left_side, rx, ry, ryaw):
+        """Counts intersections with a 1.0m radius and stores points for debug."""
+        R_TEST = 1.0
+        base_idx = 90 if is_left_side else 270
+        base_dist = lidar_ranges[base_idx]
+        if base_dist >= R_TEST: return 0
+        
+        has_front = False
+        has_back = False
+        n_rays = len(lidar_ranges)
+        
+        if not hasattr(self, 'debug_intersections'): self.debug_intersections = []
+        
+        for i in range(n_rays):
+            d = lidar_ranges[i]
+            if d < 0.01: continue
+            angle_rad = (i * angle_inc) + angle_offset
+            
+            # Check for points at the 1.0m boundary
+            if abs(d - R_TEST) < 0.05:
+                side_y = d * math.sin(angle_rad)
+                if (is_left_side and side_y > 0) or (not is_left_side and side_y < 0):
+                    long_pos = d * math.cos(angle_rad)
+                    
+                    # Store point for visualization using the provided pose
+                    wx = rx + d * math.cos(ryaw + angle_rad)
+                    wy = ry + d * math.sin(ryaw + angle_rad)
+                    
+                    if long_pos > 0.3: 
+                        if not has_front: self.debug_intersections.append((wx, wy, (255, 0, 0))) # Blue cross
+                        has_front = True
+                    if long_pos < -0.3: 
+                        if not has_back: self.debug_intersections.append((wx, wy, (0, 0, 255))) # Red cross
+                        has_back = True
+                        
+        return (1 if has_front else 0) + (1 if has_back else 0)
+
+    def _detect_initial_yaw_at(self, lidar_ranges, tx, ty, tyaw, n_rays, angle_inc, angle_offset):
+        """Finds tilt relative to grid if we assume we are at (tx, ty) facing tyaw."""
+        ranges = np.array(lidar_ranges)
+        valid = (ranges > 0.01) & (ranges < 2.5)
+        if not np.any(valid): return 0.0
+        
+        # Project points using the hypothetical yaw
+        ray_angles = tyaw + angle_offset + np.arange(n_rays)[valid] * angle_inc
+        wx = tx + ranges[valid] * np.cos(ray_angles)
+        wy = ty + ranges[valid] * np.sin(ray_angles)
+        
+        dx = wx[1:] - wx[:-1]
+        dy = wy[1:] - wy[:-1]
+        dist_sq = dx**2 + dy**2
+        seg_mask = (dist_sq > 1e-8) & (dist_sq < 0.1**2)
+        if not np.any(seg_mask): return 0.0
+        
+        seg_angles = np.arctan2(dy[seg_mask], dx[seg_mask])
+        residuals = seg_angles % (np.pi / 2)
+        median_residual = np.median(residuals)
+        return (median_residual + np.pi/4) % (np.pi/2) - np.pi/4
+
+    def _get_alignment_error(self, lidar_ranges, tx, ty, tyaw, n_rays, angle_inc, angle_offset):
+        """Calculates total alignment error for a given pose."""
+        ranges = np.array(lidar_ranges)
+        valid = (ranges > 0.01) & (ranges < 2.5)
+        if not np.any(valid): return 1e6
+        
+        ray_angles = tyaw + angle_offset + np.arange(n_rays)[valid] * angle_inc
+        pts = np.stack([tx + ranges[valid] * np.cos(ray_angles),
+                        ty + ranges[valid] * np.sin(ray_angles)], axis=1)
+        
+        segments = [
+            ([-1.5, -1.5], [ 1.5, -1.5]), ([-1.5,  1.5], [ 1.5,  1.5]),
+            ([-1.5, -1.5], [-1.5,  1.5]), ([ 1.5, -1.5], [ 1.5,  1.5]),
+            ([-0.5, -0.5], [ 0.5, -0.5]), ([-0.5,  0.5], [ 0.5,  0.5]),
+            ([-0.5, -0.5], [-0.5,  0.5]), ([ 0.5, -0.5], [ 0.5,  0.5]),
+        ]
+        
+        min_dists = np.full(len(pts), 1e6)
+        for A_raw, B_raw in segments:
+            A, B = np.array(A_raw), np.array(B_raw)
+            v = B - A
+            w = pts - A
+            v_len_sq = np.sum(v * v)
+            t = np.sum(w * v, axis=1) / v_len_sq
+            
+            # Distance to the infinite line
+            closest_on_line = A + t[:, None] * v
+            dist_to_line_sq = np.sum((closest_on_line - pts)**2, axis=1)
+            
+            # Penalty for being outside the [0, 1] segment range
+            # If t < 0 or t > 1, we add a large penalty based on the distance to the endpoint
+            out_of_bounds = np.maximum(0, -t) + np.maximum(0, t - 1)
+            penalty = out_of_bounds * 5.0 # High penalty factor for overhanging
+            
+            dists = np.sqrt(dist_to_line_sq) + penalty
+            min_dists = np.minimum(min_dists, dists)
+            
+        return np.mean(min_dists)
+
+    def render(self, window_size=600, robot_x=None, robot_y=None, robot_yaw=None, lidar_pts=None):
         """
-        Renders the current state (background, trajectory, lidar, robot) to an OpenCV image.
+        Renders state onto a full window canvas. Points can extend beyond the arena into the padding.
         """
-        if not hasattr(self, 'background_img') or self.background_img is None:
-            # Try to load the arena texture
+        # Fallback to stored values
+        rx = robot_x if robot_x is not None else getattr(self, 'robot_x', 0.0)
+        ry = robot_y if robot_y is not None else getattr(self, 'robot_y', 0.0)
+        ryaw = robot_yaw if robot_yaw is not None else self.robot_yaw
+        
+        padding = 50
+        arena_size = window_size - 2 * padding
+        scale = arena_size / 3.0
+        
+        # 1. Prepare Background
+        if not hasattr(self, 'arena_bg_gray') or self.arena_bg_gray is None or self.arena_bg_gray.shape[0] != arena_size:
             try:
-                # Path relative to controllers/wro_driver/
                 path = os.path.join(os.path.dirname(__file__), "..", "..", "worlds", "textures", "Spielfeld.png")
                 raw_bg = cv2.imread(path)
                 if raw_bg is not None:
-                    # Convert to grayscale then back to BGR for drawing colors on top
                     gray = cv2.cvtColor(raw_bg, cv2.COLOR_BGR2GRAY)
-                    bg_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-                    self.background_img = cv2.resize(bg_bgr, (window_size, window_size))
+                    self.arena_bg_gray = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+                    self.arena_bg_gray = cv2.resize(self.arena_bg_gray, (arena_size, arena_size))
                 else:
-                    print(f"[Localizer] Warning: Could not load background from {path}")
-                    self.background_img = np.zeros((window_size, window_size, 3), dtype=np.uint8)
-            except Exception as e:
-                print(f"[Localizer] Error loading background: {e}")
-                self.background_img = np.zeros((window_size, window_size, 3), dtype=np.uint8)
+                    self.arena_bg_gray = np.zeros((arena_size, arena_size, 3), dtype=np.uint8)
+            except:
+                self.arena_bg_gray = np.zeros((arena_size, arena_size, 3), dtype=np.uint8)
 
-        # Start with the background image
-        img = self.background_img.copy()
+        # Create full canvas
+        img = np.full((window_size, window_size, 3), 40, dtype=np.uint8) # Dark grey frame
+        # Place arena background in center
+        img[padding:padding+arena_size, padding:padding+arena_size] = self.arena_bg_gray
         
-        # Scale factor from grid/world to window
-        scale = window_size / self.grid_size
-        
-        def to_win(world_x, world_y):
-            gx, gy = self._world_to_grid(world_x, world_y)
-            return (int(gx * scale), int(gy * scale))
+        # Global Mapping: Welt [-1.5, 1.5] -> Fenster [padding, window_size - padding]
+        def to_win(wx, wy):
+            px = int(padding + (wx + 1.5) * scale)
+            py = int(padding + (1.5 - wy) * scale)
+            return (px, py)
 
-        # 1. Draw Walls (Grey)
+        # 2. Draw Components (No clipping, can draw into padding)
         segments = [
-            # Outer
             ([-1.5, -1.5], [ 1.5, -1.5]), ([-1.5,  1.5], [ 1.5,  1.5]),
             ([-1.5, -1.5], [-1.5,  1.5]), ([ 1.5, -1.5], [ 1.5,  1.5]),
-            # Inner
             ([-0.5, -0.5], [ 0.5, -0.5]), ([-0.5,  0.5], [ 0.5,  0.5]),
             ([-0.5, -0.5], [-0.5,  0.5]), ([ 0.5, -0.5], [ 0.5,  0.5]),
         ]
         for A, B in segments:
-            p1 = to_win(A[0], A[1])
-            p2 = to_win(B[0], B[1])
-            cv2.line(img, p1, p2, (80, 80, 80), 2, cv2.LINE_AA)
+            cv2.line(img, to_win(A[0], A[1]), to_win(B[0], B[1]), (120, 120, 120), 2, cv2.LINE_AA)
 
-        # 2. Draw Trajectory (Blue)
         if len(self.trajectory) > 1:
             pts = [to_win(x, y) for x, y in self.trajectory]
             for i in range(len(pts) - 1):
-                cv2.line(img, pts[i], pts[i+1], (255, 100, 0), 1, cv2.LINE_AA)
+                cv2.line(img, pts[i], pts[i+1], (255, 150, 0), 1, cv2.LINE_AA)
 
-        # 3. Draw LiDAR points (Red)
-        for px, py in self.last_lidar_points:
-            p = to_win(px, py)
-            cv2.circle(img, p, 2, (0, 0, 255), -1, cv2.LINE_AA)
+        # Draw Dynamic Obstacles (Subtle, Grouped/Zusammengefasst)
+        if hasattr(self, 'obstacles') and len(self.obstacles) > 0:
+            # Simple clustering: Group adjacent cells
+            processed = set()
+            clusters = []
+            keys = list(self.obstacles.keys())
+            for k in keys:
+                if k in processed or self.obstacles[k] < 0.2: continue
+                # Start a new cluster
+                cluster = [k]
+                q = [k]
+                processed.add(k)
+                while q:
+                    curr = q.pop(0)
+                    for dx in [-1, 0, 1]:
+                        for dy in [-1, 0, 1]:
+                            neighbor = (curr[0]+dx, curr[1]+dy)
+                            if neighbor in self.obstacles and neighbor not in processed and self.obstacles[neighbor] >= 0.2:
+                                processed.add(neighbor)
+                                cluster.append(neighbor)
+                                q.append(neighbor)
+                clusters.append(cluster)
 
-        # 4. Draw Robot (Green Circle + Direction Line)
-        if self.trajectory:
-            rx, ry = self.trajectory[-1]
-            rp = to_win(rx, ry)
-            cv2.circle(img, rp, 8, (0, 255, 0), 2, cv2.LINE_AA)
-            
-            # Direction arrow
-            dir_len = 0.15 # metres
-            dx = dir_len * math.cos(self.robot_yaw)
-            dy = dir_len * math.sin(self.robot_yaw)
-            tp = to_win(rx + dx, ry + dy)
-            cv2.line(img, rp, tp, (0, 255, 0), 2, cv2.LINE_AA)
+            for cluster in clusters:
+                # Calculate centroid and average confidence
+                sum_x = sum(c[0] for c in cluster)
+                sum_y = sum(c[1] for c in cluster)
+                avg_conf = sum(self.obstacles[c] for c in cluster) / len(cluster)
+                
+                wx = (sum_x / len(cluster)) * self.obstacle_resolution
+                wy = (sum_y / len(cluster)) * self.obstacle_resolution
+                p = to_win(wx, wy)
+                
+                # Small subtle green rectangle
+                brightness = int(100 + avg_conf * 155)
+                color = (0, brightness, 0)
+                
+                # Draw a small 10x10 pixel rectangle (centered)
+                size = 5 
+                cv2.rectangle(img, (p[0]-size, p[1]-size), (p[0]+size, p[1]+size), color, -1)
+                cv2.rectangle(img, (p[0]-size, p[1]-size), (p[0]+size, p[1]+size), (0, 60, 0), 1) # Dark outline
+
+        # Draw Extracted Wall Segments (color-coded, each segment unique shade)
+        wall_pts_arr = getattr(self, 'last_lidar_points', np.empty((0, 2)))
+        if isinstance(wall_pts_arr, list):
+            wall_pts_arr = np.array(wall_pts_arr) if len(wall_pts_arr) > 0 else np.empty((0, 2))
+        if len(wall_pts_arr) > 0 and wall_pts_arr.ndim == 2:
+            # Inner = light blue tones (BGR), Outer = dark blue tones (BGR)
+            inner_colors = [
+                (255, 230, 180), (255, 210, 160),
+                (255, 200, 140), (240, 230, 180),
+            ]
+            outer_colors = [
+                (180, 80, 0), (160, 60, 0),
+                (140, 50, 0), (120, 70, 20),
+            ]
+            nominal_lines = [
+                (False, -1.5, False, 0), (False,  1.5, False, 1),
+                (True,  -1.5, False, 2), (True,   1.5, False, 3),
+                (False, -0.5, True,  0), (False,  0.5, True,  1),
+                (True,  -0.5, True,  2), (True,   0.5, True,  3),
+            ]
+            tol = 0.08
+            for is_vertical, coord, is_inner, ci in nominal_lines:
+                color = inner_colors[ci] if is_inner else outer_colors[ci]
+                if is_vertical:
+                    mask = np.abs(wall_pts_arr[:, 0] - coord) < tol
+                    valid_pts = wall_pts_arr[mask]
+                    if len(valid_pts) > 1:
+                        min_v = np.min(valid_pts[:, 1])
+                        max_v = np.max(valid_pts[:, 1])
+                        if is_inner and (max_v - min_v) > 1.0:
+                            center = (min_v + max_v) / 2.0
+                            min_v, max_v = center - 0.5, center + 0.5
+                        cv2.line(img, to_win(coord, min_v), to_win(coord, max_v), color, 3, cv2.LINE_AA)
+                else:
+                    mask = np.abs(wall_pts_arr[:, 1] - coord) < tol
+                    valid_pts = wall_pts_arr[mask]
+                    if len(valid_pts) > 1:
+                        min_v = np.min(valid_pts[:, 0])
+                        max_v = np.max(valid_pts[:, 0])
+                        if is_inner and (max_v - min_v) > 1.0:
+                            center = (min_v + max_v) / 2.0
+                            min_v, max_v = center - 0.5, center + 0.5
+                        cv2.line(img, to_win(min_v, coord), to_win(max_v, coord), color, 3, cv2.LINE_AA)
+
+        # Draw raw LiDAR points ON TOP in ORANGE (Larger for visibility)
+        all_pts = getattr(self, 'last_all_lidar_points', [])
+        for px, py in all_pts:
+            cv2.circle(img, to_win(px, py), 3, (0, 140, 255), -1, cv2.LINE_AA)
+
+        rp = to_win(rx, ry)
+        cv2.circle(img, rp, 10, (0, 255, 0), 2, cv2.LINE_AA)
+        dir_len = 0.2
+        tp = to_win(rx + dir_len * math.cos(ryaw), ry + dir_len * math.sin(ryaw))
+        cv2.line(img, rp, tp, (0, 255, 0), 2, cv2.LINE_AA)
+
+        # Draw Debug Circle (1.0m Radius)
+        radius_px = int(1.0 * scale)
+        cv2.circle(img, rp, radius_px, (255, 255, 0), 1, cv2.LINE_AA)
+
+        # Draw Debug Intersections (Crosses)
+        if hasattr(self, 'debug_intersections'):
+            for wx, wy, color in self.debug_intersections:
+                cv2.drawMarker(img, to_win(wx, wy), color, cv2.MARKER_CROSS, 15, 2)
+
+        # Draw Arena Boundary Line
+        cv2.rectangle(img, (padding, padding), (window_size-padding, window_size-padding), (200, 200, 200), 1)
 
         return img
 
