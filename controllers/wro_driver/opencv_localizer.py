@@ -153,7 +153,7 @@ class OpenCVLocalizer:
         
         # Rotate the local coordinates by the yaw offset candidate (where yaw=0 is North)
         # To align yaw=0 with North (+Y), we add pi/2 to the rotation angle.
-        angle = math.pi / 2 - yaw
+        angle = math.pi / 2 + yaw
         cos_y = math.cos(angle)
         sin_y = math.sin(angle)
         x_rot = x_local * cos_y - y_local * sin_y
@@ -278,7 +278,7 @@ class OpenCVLocalizer:
             y_real = (img_size - ry_px) / self.scale - padding
             
             # Convert angle_deg (image CCW rotation) to robot yaw
-            yaw_init = -angle * math.pi / 180.0
+            yaw_init = angle * math.pi / 180.0
             # Normalize yaw to [-pi, pi]
             yaw_init = (yaw_init + math.pi) % (2.0 * math.pi) - math.pi
             
@@ -299,8 +299,10 @@ class OpenCVLocalizer:
         score, x_init, y_init, yaw_init, best_angle_deg, best_loc = best_candidate
         
         # Determine driving direction:
+        # CCW: starts facing East (yaw < 0, sin_yaw < 0)
+        # CW: starts facing West (yaw > 0, sin_yaw > 0)
         sin_yaw = math.sin(yaw_init)
-        if sin_yaw > 0 or (abs(sin_yaw) < 1e-5 and yaw_init >= 0):
+        if sin_yaw < 0 or (abs(sin_yaw) < 1e-5 and yaw_init < 0):
             direction = "CCW"
         else:
             direction = "CW"
