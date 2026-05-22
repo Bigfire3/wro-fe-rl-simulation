@@ -10,7 +10,7 @@ import time
 import numpy as np
 import cv2
 from controller import Robot
-from slam import KnownMapLocalizer
+from estimation import OpenCVLocalizer
 
 # --- configuration ---
 TIME_STEP = 32            # ms
@@ -23,12 +23,6 @@ WHEEL_RADIUS = 0.03       # m (tireRadius from .wbt)
 P_GAIN = 1.5
 D_GAIN = 3.0
 MAX_STEERING = 0.9        # rad
-
-# --- SLAM configuration ---
-SLAM_GRID_SIZE = 300       # cells (300×300 → 3m×3m at 1cm resolution)
-SLAM_RESOLUTION = 0.01    # metres per cell (1cm → 300 cells = 3m = arena size)
-SLAM_UPDATE_INTERVAL = 3  # update SLAM every N controller steps
-MAP_PUSH_INTERVAL = 10    # push map to browser every N controller steps
 
 # --- Ackermann helper ---
 def ackermann_angles(target_angle):
@@ -76,22 +70,18 @@ def set_steering_angle(target_angle):
     steer_left.setPosition(left)
     steer_right.setPosition(right)
 
-# --- initialise known-map localizer ---
-localizer = KnownMapLocalizer(
-    grid_size=SLAM_GRID_SIZE,
-    resolution=SLAM_RESOLUTION,
-)
-
-
+# --- initialise OpenCV localizer ---
+localizer = OpenCVLocalizer()
 
 # --- pose estimation state ---
-# Start exactly in the middle of the North section, driving clockwise (East)
-robot_x = 0.0
-robot_y = 1.0
+# Start exactly in the middle of the South section in strictly positive space (X=1.5, Y=0.5)
+robot_x = 1.5
+robot_y = 0.5
 robot_yaw = 0.0
-imu_offset = None  # Will be calibrated on first step
-current_speed_mps = 0.0   # metres per second
-prev_imu_yaw = None      # for relative rotation tracking
+
+state = "WAIT_FOR_LIDAR"
+ref_img = localizer.create_arena_reference_image()
+collected_scans = []
 
 # --- main loop ---
 prev_error = 0.0
@@ -100,119 +90,148 @@ step_count = 0
 while robot.step(TIME_STEP) != -1:
     step_count += 1
     lidar_data = lidar.getRangeImage()
+    try:
+        cv2.waitKey(1)
+    except Exception:
+        pass
     
-    # --- IMU Yaw Fusion ---
-    imu_values = imu.getRollPitchYaw()
-    raw_yaw = imu_values[2]
-    if imu_offset is None:
-        # Calibrate IMU offset so that initial direction is exactly robot_yaw (0.0 = East)
-        imu_offset = robot_yaw - raw_yaw
-    
-    current_imu_yaw = raw_yaw + imu_offset
-    
-    speed = TARGET_SPEED
-    steering_angle = 0.0
-    
-    # Estimate linear velocity from motor speed command
-    # Average of left/right rear wheel velocities × wheel radius
-    current_speed_mps = speed * WHEEL_RADIUS  # simplified: both wheels same speed
-
-    dt = TIME_STEP / 1000.0  # seconds
-    # --- Dead Reckoning (Fused) ---
-    # We use the IMU to track relative rotation, but let the localizer fix absolute drift.
-    if prev_imu_yaw is not None:
-        yaw_diff = current_imu_yaw - prev_imu_yaw
-        # Wrap to [-pi, pi]
-        yaw_diff = (yaw_diff + math.pi) % (2 * math.pi) - math.pi
-        robot_yaw += yaw_diff
-        # Normalize to [-pi, pi]
-        robot_yaw = (robot_yaw + math.pi) % (2 * math.pi) - math.pi
-    
-    prev_imu_yaw = current_imu_yaw
-
-    robot_x += current_speed_mps * dt * math.cos(robot_yaw)
-    robot_y += current_speed_mps * dt * math.sin(robot_yaw)
-
-    if lidar_data:
-        # Helper to ignore values too far away (e.g. open track sections)
-        def cap(dist):
-            return min(dist, 1.5)
-
-        # Distances: 90=Right, 270=Left, 180=Front, 135=Front-Right, 225=Front-Left
-        right_dist = cap(lidar_data[90])
-        left_dist = cap(lidar_data[270])
-        front_dist = lidar_data[180]
-        front_right_dist = cap(lidar_data[135])
-        front_left_dist = cap(lidar_data[225])
-        
-        # 1. Centering and Parallel Driving
-        # P_GAIN keeps it centered, D_GAIN keeps it parallel
-        current_diff = left_dist - right_dist
-        derivative = current_diff - prev_error
-        
-        raw_steering = P_GAIN * current_diff + D_GAIN * derivative
-        
-        # 2. Side Wall Safety (Minimum distance 10cm)
-        # Instead of a hard snap, we add a force proportional to the threshold violation.
-        min_side = min(left_dist, right_dist)
-        if min_side < 0.2:
-            safety_force = (0.2 - min_side) * 5.0  # Stronger the closer we get
-            if left_dist < right_dist:
-                raw_steering -= safety_force  # Smoothly push away from left
-            else:
-                raw_steering += safety_force  # Smoothly push away from right
-        
-        # 3. Cornering (Front Wall Avoidance)
-        # Calculate force based on (1 - distance)^2 when closer than 1.0m
-        if front_dist < 1.0:
-            corner_force = (1.0 - front_dist)**2
+    match state:
+        case "WAIT_FOR_LIDAR":
+            motor_left.setVelocity(0.0)
+            motor_right.setVelocity(0.0)
+            steer_left.setPosition(0.0)
+            steer_right.setPosition(0.0)
             
-            # Multiply by a factor so the steering angle is strong enough to actually make the turn
-            CORNER_GAIN = 4.0 
+            if lidar_data and len(lidar_data) > 0:
+                state = "CALCULATE_INITIAL_POSITION"
+                
+        case "CALCULATE_INITIAL_POSITION":
+            motor_left.setVelocity(0.0)
+            motor_right.setVelocity(0.0)
+            steer_left.setPosition(0.0)
+            steer_right.setPosition(0.0)
             
-            # Use diagonals to decide direction (steer towards the larger opening)
-            if front_left_dist > front_right_dist:
-                raw_steering += (corner_force * CORNER_GAIN)   # Steer left
+            if lidar_data and len(lidar_data) > 0:
+                collected_scans.append(lidar_data)
+                if len(collected_scans) >= 10:
+                    scans_arr = np.array(collected_scans)
+                    # Filter out invalid values by marking them as NaN
+                    invalid_mask = (scans_arr <= 0.01) | (scans_arr >= 2.0) | np.isinf(scans_arr) | np.isnan(scans_arr)
+                    scans_arr[invalid_mask] = np.nan
+                    
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", category=RuntimeWarning)
+                        avg_ranges = np.nanmean(scans_arr, axis=0)
+                    avg_ranges = np.nan_to_num(avg_ranges, nan=0.0)
+
+                    tpl_img = localizer.project_lidar_to_template(
+                        ranges=avg_ranges,
+                        yaw=0.0
+                    )
+                    try:
+                        cv2.imshow("Calibration Reference Map", ref_img)
+                        cv2.imshow("Calibration LiDAR Template", tpl_img)
+                        print("[Calibration] Displaying Reference and Template. Press any key in the CV window to start driving...")
+                        cv2.waitKey(0)
+                    except Exception as e:
+                        print(f"[Calibration] OpenCV window error: {e}")
+                    finally:
+                        for win_name in ["Calibration Reference Map", "Calibration LiDAR Template"]:
+                            try:
+                                cv2.destroyWindow(win_name)
+                            except Exception:
+                                pass
+                    
+                    state = "DRIVE"
+                    
+        case "DRIVE":
+            # --- Stage 1: Warmup (0s - 1s) ---
+            # Stay still
+            if robot.getTime() < 1.0:
+                motor_left.setVelocity(0.0)
+                motor_right.setVelocity(0.0)
+                steer_left.setPosition(0.0)
+                steer_right.setPosition(0.0)
             else:
-                raw_steering -= (corner_force * CORNER_GAIN)   # Steer right
-        
-        # Clamp raw steering angle
-        raw_steering = max(-MAX_STEERING, min(MAX_STEERING, raw_steering))
-        
-        # 4. Low-Pass Filter (Smooths out sudden spikes)
-        # 0.5 offers a good balance: smooths out straight-line twitching 
-        # but is still fast enough to exit corners cleanly.
-        steering_angle = steering_angle + 0.5 * (raw_steering - steering_angle)
-        
-        prev_error = current_diff
-        
-        # 5. Dynamic Speed Control
-        # Speed smoothly decreases as steering angle increases, but less aggressively now.
-        # At 0 steering, speed is 100%. At MAX_STEERING, speed is 70%.
-        speed_factor = 1.0 - (abs(steering_angle) / MAX_STEERING) * 0.3
-        speed = TARGET_SPEED * max(0.7, speed_factor)
+                # --- Stage 2: Estimation Update ---
+                if lidar_data:
+                    robot_x, robot_y, robot_yaw = localizer.update(
+                        lidar_ranges=lidar_data,
+                        max_range=2.0,
+                        angle_offset=math.pi / 2 # Rotated by 180 degrees
+                    )
 
-        # --- Localization update (corrects position using known map and fuses IMU) ---
-        if step_count % SLAM_UPDATE_INTERVAL == 0:
-            robot_x, robot_y, robot_yaw = localizer.update(
-                lidar_ranges=lidar_data,
-                robot_x=robot_x,
-                robot_y=robot_y,
-                robot_yaw=robot_yaw,
-                imu_yaw=current_imu_yaw,
-                max_range=3.0,
-                angle_offset=math.pi,  # Rotated by 180 degrees
-            )
-            # --- Live OpenCV Visualization ---
-            vis_img = localizer.render(window_size=600)
-            cv2.imshow("WRO Localization", vis_img)
-            cv2.waitKey(1)
+                # --- Stage 3: Driving ---
+                speed = TARGET_SPEED
+                steering_angle = 0.0
 
+                if lidar_data:
+                    # Helper to ignore values too far away (e.g. open track sections)
+                    def cap(dist):
+                        return min(dist, 1.5)
 
+                    # Distances: 0=Back, 180=Front
+                    # With angle_offset=pi and negative angle_inc:
+                    # 90 is +90 deg (Left), 270 is -90 deg (Right)
+                    # 135 is +45 deg (Front-Left), 225 is -45 deg (Front-Right)
+                    right_dist = cap(lidar_data[270])
+                    left_dist = cap(lidar_data[90])
+                    front_dist = lidar_data[180]
+                    front_right_dist = cap(lidar_data[225])
+                    front_left_dist = cap(lidar_data[135])
+                    
+                    # 1. Centering and Parallel Driving
+                    # P_GAIN keeps it centered, D_GAIN keeps it parallel
+                    current_diff = left_dist - right_dist
+                    derivative = current_diff - prev_error
+                    
+                    # Invert: More room on Left -> Steer LEFT (negative)
+                    raw_steering = -(P_GAIN * current_diff + D_GAIN * derivative)
+                    
+                    # 2. Side Wall Safety (Minimum distance 10cm)
+                    min_side = min(left_dist, right_dist)
+                    if min_side < 0.2:
+                        safety_force = (0.2 - min_side) * 5.0 
+                        if left_dist < right_dist:
+                            raw_steering += safety_force  # Push away from LEFT (steer Right)
+                        else:
+                            raw_steering -= safety_force  # Push away from RIGHT (steer Left)
+                    
+                    # 3. Cornering (Front Wall Avoidance)
+                    if front_dist < 1.0:
+                        corner_force = (1.0 - front_dist)**2
+                        CORNER_GAIN = 8.0 
+                        
+                        # Use diagonals to decide steering (adaptive)
+                        if front_left_dist > front_right_dist:
+                            raw_steering -= (corner_force * CORNER_GAIN)   # Steer LEFT (negative)
+                        else:
+                            raw_steering += (corner_force * CORNER_GAIN)   # Steer RIGHT (positive)
+                    
+                    # Clamp raw steering angle
+                    raw_steering = max(-MAX_STEERING, min(MAX_STEERING, raw_steering))
+                    
+                    # 4. Low-Pass Filter (Smooths out sudden spikes)
+                    steering_angle = steering_angle + 0.5 * (raw_steering - steering_angle)
+                    
+                    prev_error = current_diff
+                    
+                    # 5. Dynamic Speed Control
+                    speed_factor = 1.0 - (abs(steering_angle) / MAX_STEERING) * 0.3
+                    speed = TARGET_SPEED * max(0.7, speed_factor)
 
-    # Drive rear wheels
-    motor_right.setVelocity(speed)
-    motor_left.setVelocity(speed)
+                    # --- Live OpenCV Visualization ---
+                    vis_img = localizer.render()
+                    try:
+                        cv2.imshow("WRO Localization", vis_img)
+                        cv2.waitKey(1)
+                    except Exception:
+                        pass
 
-    # Apply steering
-    set_steering_angle(steering_angle)
+                # Drive rear wheels
+                motor_right.setVelocity(speed)
+                motor_left.setVelocity(speed)
+
+                # Apply steering
+                set_steering_angle(steering_angle)
