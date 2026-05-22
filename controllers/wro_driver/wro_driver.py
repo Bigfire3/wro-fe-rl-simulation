@@ -18,6 +18,7 @@ import cv2
 # pyrefly: ignore [missing-import]
 from controller import Robot
 from opencv_localizer import OpenCVLocalizer
+from trans_icp_localizer import TranslationICPLocalizer
 
 # --- configuration ---
 TIME_STEP = 32            # ms
@@ -84,8 +85,9 @@ def set_steering_angle(target_angle):
     steer_left.setPosition(left)
     steer_right.setPosition(right)
 
-# --- initialise OpenCV localizer ---
+# --- initialise OpenCV localizers ---
 localizer = OpenCVLocalizer()
+icp_localizer = TranslationICPLocalizer()
 
 # --- state variables ---
 robot_x = 1.5
@@ -98,6 +100,7 @@ driving_direction = None
 collected_scans = []
 prev_error = 0.0
 smoothed_steering = 0.0
+imu_yaw_initial = None  # Erster IMU-Wert zum Nullen (wie echte IMU)
 
 # Generate reference image for calibration
 ref_img = localizer.create_arena_reference_image()
@@ -107,17 +110,25 @@ def run_perception(robot, lidar, imu, camera):
     """
     Stage 1: Wahrnehmung.
     Liest Sensordaten aus und bereitet sie in einem standardisierten Format auf.
+    Die IMU wird beim ersten Aufruf genullt (wie eine echte IMU).
     Enthält KEINE Zustandslogik.
     """
+    global imu_yaw_initial
+    
     lidar_data = lidar.getRangeImage()
     if lidar_data is None:
         lidar_data = []
         
     try:
         rpy = imu.getRollPitchYaw()
-        imu_yaw = rpy[2] if rpy else 0.0
+        imu_yaw_raw = rpy[2] if rpy else 0.0
     except Exception:
-        imu_yaw = 0.0
+        imu_yaw_raw = 0.0
+    
+    # IMU nullen: Ersten Wert speichern, danach nur noch Änderungen ausgeben
+    if imu_yaw_initial is None:
+        imu_yaw_initial = imu_yaw_raw
+    imu_yaw = imu_yaw_raw - imu_yaw_initial
         
     return {
         "lidar_ranges": lidar_data,
@@ -125,7 +136,7 @@ def run_perception(robot, lidar, imu, camera):
     }
 
 # --- STAGE 2: ESTIMATION ---
-def run_estimation(localizer, sensor_data):
+def run_estimation(localizer, icp_localizer, sensor_data):
     """
     Stage 2: Zustandsschätzung.
     Aktualisiert die geschätzte Roboterpose (x, y, yaw) und das Belegungsgitter.
@@ -171,6 +182,7 @@ def run_estimation(localizer, sensor_data):
                     
                     # Initial-Pose setzen
                     localizer.set_initial_pose(x_init, y_init, yaw_init)
+                    icp_localizer.set_initial_pose(x_init, y_init, yaw_init)
                     robot_x, robot_y, robot_yaw = x_init, y_init, yaw_init
                     
                     initial_pose_found = True
@@ -180,6 +192,7 @@ def run_estimation(localizer, sensor_data):
                     print(f"[Calibration] Error during calibration: {e}")
                     # Fallback auf Standardwerte bei Fehler
                     localizer.set_initial_pose(1.5, 0.5, 0.0)
+                    icp_localizer.set_initial_pose(1.5, 0.5, 0.0)
                     robot_x, robot_y, robot_yaw = 1.5, 0.5, 0.0
                     initial_pose_found = True
                     driving_direction = "CCW"
@@ -189,10 +202,10 @@ def run_estimation(localizer, sensor_data):
                     except Exception:
                         pass
         else:
-            robot_x, robot_y, robot_yaw = localizer.update(
+            robot_x, robot_y, robot_yaw = icp_localizer.update(
                 lidar_ranges=lidar_ranges,
-                max_range=2.0,
-                angle_offset=math.pi / 2  # 90 Grad Rotation
+                imu_yaw=sensor_data["imu_yaw"],
+                max_range=2.0
             )
             
     return robot_x, robot_y, robot_yaw
@@ -315,7 +328,7 @@ while robot.step(TIME_STEP) != -1:
     sensor_data = run_perception(robot, lidar, imu, camera)
     
     # --- 2. STAGE 2: ESTIMATION ---
-    robot_pose = run_estimation(localizer, sensor_data)
+    robot_pose = run_estimation(localizer, icp_localizer, sensor_data)
     
     # --- 3. STAGE 3: PLANNING ---
     target_speed, target_steering = run_planning(robot_pose, sensor_data)
@@ -325,7 +338,7 @@ while robot.step(TIME_STEP) != -1:
     
     # --- Live OpenCV Visualisierung ---
     if len(sensor_data["lidar_ranges"]) > 0:
-        vis_img = localizer.render()
+        vis_img = icp_localizer.render() if initial_pose_found else localizer.render()
         try:
             cv2.imshow("WRO Localization", vis_img)
         except Exception:
