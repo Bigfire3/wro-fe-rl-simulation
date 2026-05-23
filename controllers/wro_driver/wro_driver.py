@@ -19,6 +19,7 @@ import cv2
 from controller import Robot
 from opencv_localizer import OpenCVLocalizer
 from trans_icp_localizer import TranslationICPLocalizer
+from obstacle_mapper import ObstacleMapper
 
 # --- configuration ---
 TIME_STEP = 32            # ms
@@ -88,6 +89,7 @@ def set_steering_angle(target_angle):
 # --- initialise OpenCV localizers ---
 localizer = OpenCVLocalizer()
 icp_localizer = TranslationICPLocalizer()
+obstacle_mapper = ObstacleMapper()
 
 # --- state variables ---
 robot_x = 1.5
@@ -136,7 +138,7 @@ def run_perception(robot, lidar, imu, camera):
     }
 
 # --- STAGE 2: ESTIMATION ---
-def run_estimation(localizer, icp_localizer, sensor_data):
+def run_estimation(localizer, icp_localizer, obstacle_mapper, sensor_data):
     """
     Stage 2: Zustandsschätzung.
     Aktualisiert die geschätzte Roboterpose (x, y, yaw) und das Belegungsgitter.
@@ -202,11 +204,12 @@ def run_estimation(localizer, icp_localizer, sensor_data):
                     except Exception:
                         pass
         else:
-            robot_x, robot_y, robot_yaw = icp_localizer.update(
+            robot_x, robot_y, robot_yaw, outliers = icp_localizer.update(
                 lidar_ranges=lidar_ranges,
                 imu_yaw=sensor_data["imu_yaw"],
                 max_range=2.0
             )
+            obstacle_mapper.update([robot_x, robot_y, robot_yaw], outliers)
             
     return robot_x, robot_y, robot_yaw
 
@@ -328,7 +331,7 @@ while robot.step(TIME_STEP) != -1:
     sensor_data = run_perception(robot, lidar, imu, camera)
     
     # --- 2. STAGE 2: ESTIMATION ---
-    robot_pose = run_estimation(localizer, icp_localizer, sensor_data)
+    robot_pose = run_estimation(localizer, icp_localizer, obstacle_mapper, sensor_data)
     
     # --- 3. STAGE 3: PLANNING ---
     target_speed, target_steering = run_planning(robot_pose, sensor_data)
@@ -339,6 +342,8 @@ while robot.step(TIME_STEP) != -1:
     # --- Live OpenCV Visualisierung ---
     if len(sensor_data["lidar_ranges"]) > 0:
         vis_img = icp_localizer.render() if initial_pose_found else localizer.render()
+        if initial_pose_found:
+            vis_img = obstacle_mapper.render(vis_img, robot_pose, icp_localizer.scale, icp_localizer.window_size)
         try:
             cv2.imshow("WRO Localization", vis_img)
         except Exception:

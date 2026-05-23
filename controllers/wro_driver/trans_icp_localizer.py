@@ -82,12 +82,12 @@ class TranslationICPLocalizer:
         ranges = np.array(lidar_ranges)
         n_rays = len(ranges)
         if n_rays == 0:
-            return self.X_real, self.Y_real, self.yaw_real
+            return self.X_real, self.Y_real, self.yaw_real, []
 
         # 1. LiDAR-Strahlen filtern (valide Reichweite [0.01, max_range])
         valid = (ranges > 0.01) & (ranges < max_range) & ~np.isinf(ranges) & ~np.isnan(ranges)
         if not np.any(valid):
-            return self.X_real, self.Y_real, self.yaw_real
+            return self.X_real, self.Y_real, self.yaw_real, []
 
         r_valid = ranges[valid]
         indices = np.arange(n_rays)[valid]
@@ -114,6 +114,7 @@ class TranslationICPLocalizer:
 
         x_est = self.X_real
         y_est = self.Y_real
+        outliers = []
 
         # 4. Translation-Only ICP-Schleife über genau 3 Iterationen
         for iteration in range(3):
@@ -127,6 +128,7 @@ class TranslationICPLocalizer:
             # Speichere die Punktklassifikationen in der letzten Iteration für die Visualisierung
             if iteration == 2:
                 self.point_types = []
+                outliers = []
 
             for px, py in zip(x_glob, y_glob):
                 min_dist = float('inf')
@@ -159,6 +161,9 @@ class TranslationICPLocalizer:
 
                 if iteration == 2:
                     self.point_types.append((px, py, is_inlier))
+                    if not is_inlier:
+                        if 0.0 <= px <= 3.0 and 0.0 <= py <= 3.0:
+                            outliers.append([px, py])
 
             # Korrektur mittels Median berechnen und anwenden
             if len(dx_list) > 0:
@@ -183,7 +188,7 @@ class TranslationICPLocalizer:
                 if len(self.trajectory_history) > 5000:
                     self.trajectory_history.pop(0)
 
-        return self.X_real, self.Y_real, self.yaw_real
+        return self.X_real, self.Y_real, self.yaw_real, outliers
 
     def render(self, max_range=2.0):
         """
