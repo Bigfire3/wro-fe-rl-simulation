@@ -50,9 +50,9 @@ Anstelle eines rechenintensiven Gitters (Occupancy Grid) wird eine dynamische Li
 *   `color` (Farbe): Initialisiert als `grau` (unknown), Auswertung zu `rot`/`grün` erfolgt später.
 
 ### Ablauf des Mapping-Algorithmus
-1.  **Ausreißer-Erkennung (Karte abziehen):**
-    *   Nach der Lokalisierung werden alle LiDAR-Punkte, die nahe an den statischen Wänden liegen, herausgefiltert.
-    *   Die verbleibenden Punkte im Freiraum sind Hindernis-Kandidaten.
+1.  **Ausreißer-Erkennung:**
+    *   Im Translation ICP aus 1. A werden Punkte bereits als Inlier und Outlier klassifiziert.
+    *   Die Outlier-Punkte im Freiraum sind Hindernis-Kandidaten.
 2.  **Rauschfilter (Clustering):**
     *   Punkte werden geclustert (z. B. einfache Distanz-Nachbarschaft).
     *   Cluster der Größe 1 (einzelne isolierte Punkte) werden als Rauschen verworfen. Nur Cluster mit $\ge 2$ Punkten werden weiterverarbeitet.
@@ -62,5 +62,7 @@ Anstelle eines rechenintensiven Gitters (Occupancy Grid) wird eine dynamische Li
     *   **Falls nein:** Ein neues `Obstacle` wird mit niedriger Start-Confidence erzeugt.
 4.  **Sichtfeld-basiertes Vergessen (Decay):**
     *   In jedem Zyklus verringert sich die Confidence aller bekannten Hindernisse leicht.
-    *   **Wichtige Einschränkung:** Dieser Decay-Schritt wird *nur* auf Hindernisse angewendet, deren Abstand zum Roboter kleiner als der LiDAR-Radius ($2.0\text{m}$) ist oder deren Sichtachse verdeckt ist. Hindernisse außerhalb des Sichtfelds behalten ihre Confidence, damit sie beim Umrunden der Strecke nicht gelöscht werden.
+    *   **Wichtige Einschränkung:** Dieser Decay-Schritt wird *nur* auf Hindernisse angewendet, deren Abstand zum Roboter kleiner als der LiDAR-Radius ($2.0\text{m}$) ist oder deren Sichtachse nicht verdeckt ist. Hindernisse außerhalb des Sichtfelds oder deren Sichtache verdeckt ist, behalten ihre Confidence, damit sie beim Umrunden der Strecke oder bei Verdeckung nicht gelöscht werden.
     *   Fällt die Confidence eines Hindernisses unter einen Schwellenwert, wird es aus der Liste gelöscht.
+5. **Debugging:**
+    *   Auf dem "WRO Localization" Fenster sollen die Hindernisse angezeigt werden. Wenn sie auf der Sichtachse des Roboters liegen, soll eine dünne Verbindungslinie zwischen Roboter und jeweiligem Hindernis eingezeichnet werden, damit ich sehe, wann die Confidence beeinflusst werden kann. Die Tönung der Farbe des Hindernisses soll der Confidence entsprechen, z.B. hellgrau für niedrig, grau für mittel und dunkelgrau für hoch.

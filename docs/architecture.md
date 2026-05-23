@@ -11,7 +11,7 @@ Die Zustandslogik (State Machine) ist dabei vollständig in **STAGE 3: PLANNING*
   * *Einschränkung:* Diese Stufe enthält **keine** Zustandsprüfungen, Wartezeiten oder Kontrollflusssteuerungen (keine State-Machine-Logik).
   
 * **[ STAGE 2: ESTIMATION ]** (Zustandsschätzung)
-  * *Verantwortung:* Berechnung der Roboterpose `(x, y, yaw)` durch geometrischen Abgleich (z. B. mittels Template-Matching gegen eine Referenz-Karte) und kontinuierliches Pose-Tracking. Führt beim Start die einmalige Initial-Lokalisierung (Kalibrierung) durch, um die genaue Anfangspose und die Fahrtrichtung (CW/CCW) im Startkorridor zu bestimmen.
+  * *Verantwortung:* Berechnung der Roboterpose `(x, y, yaw)` durch geometrischen Abgleich (Template-Matching zur Kalibrierung, Translation-Only ICP zum kontinuierlichen Tracking). Klassifiziert LiDAR-Ausreißer und führt ein dynamisches Hindernis-Mapping (Obstacle Mapping) durch.
   
 * **[ STAGE 3: PLANNING ]** (Pfadplanung & State Machine)
   * *Verantwortung:* Ausführung der übergeordneten hierarchischen State Machine (HSM), d.h. Steuerung des System-Lebenszyklus (`STOP` -> `RUNNING` -> `COMPLETED`/`ERROR`) und der Fahr-Verhaltensweisen sowie Generierung der Soll-Trajektorie (Geschwindigkeits- und Lenkwinkelvorgaben).
@@ -48,20 +48,18 @@ Die Codebasis verwendet ein strikt positives globales Koordinatensystem für die
 
 ---
 
-## 3. Modulspezifikation: `OpenCVLocalizer` (`opencv_localizer.py`)
+## 3. Modulspezifikation: Schätzung & Mapping (Stage 2)
 
-Das Schätzmodul (Estimation) is vollständig eigenständig und austauschbar. Es stellt eine standardisierte Schnittstelle für die Lokalisierung und die initiale Kalibrierung bereit.
+### 3.1. `OpenCVLocalizer` (`opencv_localizer.py`)
+* **`calibrate_initial_pose(avg_ranges, angle_offset, angle_inc)`**: Bestimmt die Anfangspose im Startkorridor mittels Template Matching und leitet die Fahrtrichtung (`CW`/`CCW`) ab.
 
-### 3.1. Standardschnittstelle der Klasse
-* **Initialisierung:** `__init__(self)`
-* **Initial-Pose setzen:** `def set_initial_pose(self, x, y, yaw)`
-  * *Zweck:* Setzt die Startpose des Roboters.
-* **Initial-Pose Kalibrierung:** `def calibrate_initial_pose(self, avg_ranges, angle_offset, angle_inc, padding=2.0)`
-  * *Zweck:* Führt eine zweistufige (grob-zu-fein) rotationsinvariante Vorlagenübereinstimmung (Template Matching) durch, bestimmt die Anfangspose unter Berücksichtigung des Startkorridors ($y < 1.1\,\text{m}$) und leitet daraus die Fahrtrichtung (`CW` oder `CCW`) ab.
-  * *Rückgabe:* `(float x_init, float y_init, float yaw_init, str direction, np.ndarray debug_img)`
-* **Pipeline-Einstiegspunkt:** `def update(self, lidar_ranges, max_range=2.0, angle_offset=0)`
-  * *Zweck:* Aktualisiert die Pose im laufenden Betrieb und zeichnet das Live-LiDAR-Bild.
-  * *Rückgabe:* `(float x_real, float y_real, float yaw_real)`
+### 3.2. `TranslationICPLocalizer` (`trans_icp_localizer.py`)
+* **`update(lidar_ranges, imu_yaw)`**: Berechnet die Pose `(x, y, yaw)` über 3 Iterationen Translation-Only ICP und gibt LiDAR-Ausreißer (Wandabstand $\ge 15\,\text{cm}$) zurück.
+* **`render()`**: Erzeugt das Debug-Bild mit LiDAR-Punkten (Inlier=grün, Outlier=rot), Trajektorienverlauf (orange) und Roboterpose.
+
+### 3.3. `ObstacleMapper` (`obstacle_mapper.py`)
+* **`update(robot_pose, outlier_points)`**: Clustert Outliers (Schwelle $10\,\text{cm}$, Rauschfilter $\ge 2$ Punkte), gleicht sie mit Hindernissen ($50\,\text{mm}$ Boxen) ab und passt Position/Confidence (+0.15) an. Verringert Confidence (-0.02) bei Nicht-Erkennung nur im freien Sichtfeld (Radius $< 2.0\,\text{m}$, Sichtachse nicht verdeckt).
+* **`render(img, robot_pose, scale, window_size)`**: Zeichnet Hindernisse (Grauton entspricht Confidence) und Sichtlinien (grün) zum Roboter.
 
 ---
 

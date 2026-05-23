@@ -84,6 +84,7 @@ Aktiver Betriebsmodus auf der Strecke. Kapselt und führt die Sub-State Machine 
 **Inputs:**
 - Kontinuierliche Sensordaten (LiDAR, IMU, Kamera)
 - Geschätzte Roboterpose `(x_real, y_real, yaw_real)`
+- Liste aktiver Hindernisse (`obstacle_mapper.obstacles`)
 - Solltrajektorie des aktiven Sub-States
 
 **Outputs:**
@@ -137,6 +138,7 @@ Durchfahren der Rennstrecke mittels Wandverfolgung und Ausweichmanövern.
 **Inputs:**
 - Aktuelle Pose `(x_real, y_real, yaw_real)`
 - LiDAR-Distanzen
+- Liste aktiver Hindernisse (`obstacle_mapper.obstacles`)
 
 **Outputs:**
 - Soll-Trajektorie (Geschwindigkeits- und Lenkvorgaben für Wandfolgemodus und Hindernisumfahrung)
