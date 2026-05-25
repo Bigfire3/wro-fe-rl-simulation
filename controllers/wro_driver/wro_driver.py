@@ -179,8 +179,8 @@ def run_estimation(localizer, icp_localizer, obstacle_mapper, sensor_data):
                     cv2.imshow("Calibration Result", debug_img)
                     print(f"[Calibration] Best candidate found at: x={x_init:.3f}m, y={y_init:.3f}m, yaw={yaw_init:.3f} rad ({math.degrees(yaw_init):.1f}°)")
                     print(f"[Calibration] Resolved driving direction: {direction}")
-                    print("[Calibration] Press any key in the 'Calibration Result' CV window to start driving...")
-                    cv2.waitKey(0)
+                    print("[Calibration] Starting in 3 seconds...")
+                    cv2.waitKey(3000)
                     
                     # Initial-Pose setzen
                     localizer.set_initial_pose(x_init, y_init, yaw_init)
