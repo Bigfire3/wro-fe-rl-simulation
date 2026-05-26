@@ -18,8 +18,8 @@ WorldInfo {
   ]
 }
 Viewpoint {
-  orientation 0.28581911929302745 -0.278179293355068 -0.9170189266285801 4.631051966484608
-  position 0.05588318521984326 -5.187368554740715 3.4585767372813083
+  orientation 0.2203457332900676 -0.20184912757333423 -0.9543084865591138 4.6202086032408385
+  position 0.48241954042903995 -6.144305609224839 3.139153164096842
 }
 Background {
   skyColor [
@@ -134,11 +134,11 @@ AckermannVehicle {
       name "chassis"
     }
     Camera {
-      translation 0.2 0 0.07
-      rotation 0 1 0 0.26
-      fieldOfView 2
-      width 1024
-      height 480
+      translation 0.16 0 0.01
+      rotation 0 1 0 0
+      fieldOfView 1.7802358
+      width 1280
+      height 720
     }
     Lidar {
       translation 0.07 0 0.045
