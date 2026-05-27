@@ -58,8 +58,8 @@ Die Codebasis verwendet ein strikt positives globales Koordinatensystem für die
 * **`render()`**: Erzeugt das Debug-Bild mit LiDAR-Punkten (Inlier=grün, Outlier=rot), Trajektorienverlauf (orange) und Roboterpose.
 
 ### 3.3. `ObstacleMapper` (`obstacle_mapper.py`)
-* **`update(robot_pose, outlier_points)`**: Clustert Outliers (Schwelle $10\,\text{cm}$, Rauschfilter $\ge 2$ Punkte), gleicht sie mit Hindernissen ($50\,\text{mm}$ Boxen) ab und passt Position/Confidence (+0.15) an. Verringert Confidence (-0.02) bei Nicht-Erkennung nur im freien Sichtfeld (Radius $< 2.0\,\text{m}$, Sichtachse nicht verdeckt).
-* **`render(img, robot_pose, scale, window_size)`**: Zeichnet Hindernisse (Grauton entspricht Confidence) und Sichtlinien (grün) zum Roboter.
+* **`update(robot_pose, outlier_points)`**: Clustert Outliers (Schwelle $10\,\text{cm}$, Rauschfilter $\ge 2$ Punkte), gleicht sie mit Hindernissen ($50\,\text{mm}$ Boxen) ab und passt die Position (mittels Tiefpassfilter $\alpha = 0.1$) sowie die Confidence (+0.01) an. Verringert die Confidence (-0.01) bei Nicht-Erkennung nur im freien Sichtfeld (Radius $< 2.0\,\text{m}$, Sichtachse nicht durch Wände oder andere Hindernisse verdeckt).
+* **`render(img, robot_pose, scale, window_size)`**: Zeichnet Hindernisse (Farbe entspricht der klassifizierten Farbe rot/grün oder Grauton basierend auf der Confidence) und Sichtlinien (grün) zum Roboter.
 
 ---
 
