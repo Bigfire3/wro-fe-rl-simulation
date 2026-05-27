@@ -131,11 +131,27 @@ def run_perception(robot, lidar, imu, camera):
     if imu_yaw_initial is None:
         imu_yaw_initial = imu_yaw_raw
     imu_yaw = imu_yaw_raw - imu_yaw_initial
+    
+    # Kamera auslesen und konvertieren
+    img_bgr = None
+    try:
+        w = camera.getWidth()
+        h = camera.getHeight()
+        img_buffer = camera.getImage()
+        if img_buffer:
+            img_raw = np.frombuffer(img_buffer, dtype=np.uint8).reshape((h, w, 4))
+            img_bgr = cv2.cvtColor(img_raw, cv2.COLOR_BGRA2BGR)
+    except Exception as e:
+        print(f"[Perception] Error reading camera: {e}")
         
-    return {
+    sensor_dict = {
         "lidar_ranges": lidar_data,
         "imu_yaw": imu_yaw
     }
+    if img_bgr is not None:
+        sensor_dict["camera_image"] = img_bgr
+        
+    return sensor_dict
 
 # --- STAGE 2: ESTIMATION ---
 def run_estimation(localizer, icp_localizer, obstacle_mapper, sensor_data):
@@ -179,8 +195,8 @@ def run_estimation(localizer, icp_localizer, obstacle_mapper, sensor_data):
                     cv2.imshow("Calibration Result", debug_img)
                     print(f"[Calibration] Best candidate found at: x={x_init:.3f}m, y={y_init:.3f}m, yaw={yaw_init:.3f} rad ({math.degrees(yaw_init):.1f}°)")
                     print(f"[Calibration] Resolved driving direction: {direction}")
-                    print("[Calibration] Starting in 3 seconds...")
-                    cv2.waitKey(3000)
+                    print("[Calibration] Starting in 2 seconds...")
+                    cv2.waitKey(2000)
                     
                     # Initial-Pose setzen
                     localizer.set_initial_pose(x_init, y_init, yaw_init)
@@ -210,6 +226,8 @@ def run_estimation(localizer, icp_localizer, obstacle_mapper, sensor_data):
                 max_range=2.0
             )
             obstacle_mapper.update([robot_x, robot_y, robot_yaw], outliers)
+            if "camera_image" in sensor_data:
+                obstacle_mapper.update_obstacle_colors(sensor_data["camera_image"], [robot_x, robot_y, robot_yaw])
             
     return robot_x, robot_y, robot_yaw
 
@@ -344,6 +362,12 @@ while robot.step(TIME_STEP) != -1:
         vis_img = icp_localizer.render() if initial_pose_found else localizer.render()
         if initial_pose_found:
             vis_img = obstacle_mapper.render(vis_img, robot_pose, icp_localizer.scale, icp_localizer.window_size)
+            if "camera_image" in sensor_data:
+                cam_debug = obstacle_mapper.render_camera(sensor_data["camera_image"], robot_pose)
+                try:
+                    cv2.imshow("WRO Camera Debug", cam_debug)
+                except Exception:
+                    pass
         try:
             cv2.imshow("WRO Localization", vis_img)
         except Exception:
