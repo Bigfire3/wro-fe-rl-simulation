@@ -1,0 +1,251 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/solids/protos/SolidBox.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/BrushedAluminium.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/abstract/AckermannVehicle.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/abstract/VehicleWheel.proto"
+
+WorldInfo {
+  contactProperties [
+    ContactProperties {
+      coulombFriction [
+        8
+      ]
+      bounce 0
+      softCFM 0.0001
+    }
+  ]
+}
+Viewpoint {
+  orientation 0.31255771933287885 -0.2815717749168795 -0.9072072572767413 4.541277074956849
+  position 0.8523040382370546 -6.478126474538925 5.10618097110986
+}
+Background {
+  skyColor [
+    0.4 0.7 1
+  ]
+}
+DirectionalLight {
+  ambientIntensity 1
+  direction 0.1 -0.5 0.3
+}
+RectangleArena {
+  floorSize 3 3
+  floorTileSize 3 3
+  floorAppearance PBRAppearance {
+    baseColorMap ImageTexture {
+      url [
+        "textures/Spielfeld.png"
+      ]
+    }
+  }
+  wallAppearance BrushedAluminium {
+    colorOverride 0 0 0
+  }
+}
+SolidBox {
+  translation -1.1 -0.5 0.05
+  name "Obstacle_Red"
+  size 0.045 0.045 0.1
+  appearance PBRAppearance {
+    baseColor 0.7569 0.0706 0.1098
+    roughness 0.6
+    metalness 0
+  }
+}
+SolidBox {
+  translation 1.1 0.5 0.05
+  name "Obstacle_Red(1)"
+  size 0.045 0.045 0.1
+  appearance PBRAppearance {
+    baseColor 0.7569 0.0706 0.1098
+    roughness 0.6
+    metalness 0
+  }
+}
+SolidBox {
+  translation 1.1 -0.5 0.05
+  name "Obstacle_Red(2)"
+  size 0.045 0.045 0.1
+  appearance PBRAppearance {
+    baseColor 0.7569 0.0706 0.1098
+    roughness 0.6
+    metalness 0
+  }
+}
+SolidBox {
+  translation 0 1.1 0.05
+  name "Obstacle_Green"
+  size 0.045 0.045 0.1
+  appearance PBRAppearance {
+    baseColor 0 0.545 0.161
+    roughness 0.6
+    metalness 0
+  }
+}
+SolidBox {
+  translation 0.01 0.5 0.05
+  name "Wall_Element"
+  size 1 0.02 0.1
+  appearance PBRAppearance {
+    baseColor 0 0 0
+    roughness 1
+    metalness 0
+  }
+}
+SolidBox {
+  translation 0.5 -0.00999996 0.05
+  rotation 0 0 1 1.5708
+  name "Wall_Element(1)"
+  size 1 0.02 0.1
+  appearance PBRAppearance {
+    baseColor 0 0 0
+    roughness 1
+    metalness 0
+  }
+}
+SolidBox {
+  translation -0.01 -0.5 0.05
+  name "Wall_Element(2)"
+  size 1 0.02 0.1
+  appearance PBRAppearance {
+    baseColor 0 0 0
+    roughness 1
+    metalness 0
+  }
+}
+SolidBox {
+  translation -0.5 0.01 0.05
+  rotation 0 0 1 1.5708
+  name "Wall_Element(3)"
+  size 1 0.02 0.1
+  appearance PBRAppearance {
+    baseColor 0 0 0
+    roughness 1
+    metalness 0
+  }
+}
+AckermannVehicle {
+  translation -0.221441 -1.01067 0.0300003
+  rotation 0 0 1 -5.307179586466759e-06
+  controller "<extern>"
+  supervisor TRUE
+  trackFront 0.12
+  trackRear 0.12
+  wheelbase 0.14
+  minSteeringAngle -0.8
+  maxSteeringAngle 0.8
+  wheelsDampingConstant 0.01
+  extensionSlot [
+    Solid {
+      translation 0.06 0 0.005
+      children [
+        Shape {
+          appearance PBRAppearance {
+            baseColor 0.2 0.2 0.2
+            roughness 0.8
+            metalness 0.3
+          }
+          geometry Box {
+            size 0.18 0.06 0.005
+          }
+        }
+      ]
+      name "chassis"
+    }
+    Camera {
+      translation 0.16 0 0.01
+      rotation 0 1 0 0
+      fieldOfView 1.7802358
+      width 1280
+      height 720
+    }
+    Lidar {
+      translation 0.07 0 0.045
+      horizontalResolution 360
+      fieldOfView 6.28318
+      numberOfLayers 1
+      maxRange 2
+    }
+    InertialUnit {
+      translation 0.07 0 0
+      name "imu"
+    }
+  ]
+  boundingObject Pose {
+    translation 0.06 0 0.005
+    children [
+      Box {
+        size 0.18 0.06 0.005
+      }
+    ]
+  }
+  physics Physics {
+    density -1
+    mass 1
+    centerOfMass [
+      0.1 0 0.025
+    ]
+  }
+  wheelFrontRight VehicleWheel {
+    name "front right wheel"
+    thickness 0.01875
+    tireRadius 0.03
+    rimRadius 0.0225
+    rimBeamWidth 0.0075
+    centralInnerRadius 0.0075
+    centralOuterRadius 0.015
+    rimBeamThickness 0.0075
+    rimBeamOffset 0
+  }
+  wheelFrontLeft VehicleWheel {
+    name "front left wheel"
+    thickness 0.01875
+    tireRadius 0.03
+    rimRadius 0.0225
+    rimBeamWidth 0.0075
+    centralInnerRadius 0.0075
+    centralOuterRadius 0.015
+    rimBeamThickness 0.0075
+    rimBeamOffset 0
+    wheelSide TRUE
+  }
+  wheelRearRight VehicleWheel {
+    name "rear right wheel"
+    thickness 0.01875
+    tireRadius 0.03
+    rimRadius 0.0225
+    rimBeamWidth 0.0075
+    centralInnerRadius 0.0075
+    centralOuterRadius 0.015
+    rimBeamThickness 0.0075
+    rimBeamOffset 0
+  }
+  wheelRearLeft VehicleWheel {
+    name "rear left wheel"
+    thickness 0.01875
+    tireRadius 0.03
+    rimRadius 0.0225
+    rimBeamWidth 0.0075
+    centralInnerRadius 0.0075
+    centralOuterRadius 0.015
+    rimBeamThickness 0.0075
+    rimBeamOffset 0
+    wheelSide TRUE
+  }
+  axisDevicesRearRight [
+    RotationalMotor {
+      name "motor_rear_right"
+      maxVelocity 20
+      maxTorque 0.5
+    }
+  ]
+  axisDevicesRearLeft [
+    RotationalMotor {
+      name "motor_rear_left"
+      maxVelocity 20
+      maxTorque 0.5
+    }
+  ]
+}
