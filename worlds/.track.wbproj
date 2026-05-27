@@ -10,4 +10,4 @@ orthographicViewHeight: 1
 textFiles: -1
 globalOptionalRendering: LidarRaysPaths
 consoles: Console:All:All
-renderingDevicePerspectives: vehicle:camera;1;0.168313;0.869169;0.835971
+renderingDevicePerspectives: vehicle:camera;1;0.128201;0.783728;0.729611

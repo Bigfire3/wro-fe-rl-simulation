@@ -18,8 +18,8 @@ WorldInfo {
   ]
 }
 Viewpoint {
-  orientation 0.277655343149709 -0.2645906160760904 -0.9235254822174059 4.618073237269923
-  position 0.25658971895810406 -5.001287191987375 3.1958240708432624
+  orientation 0.31255771933287885 -0.2815717749168795 -0.9072072572767413 4.541277074956849
+  position 0.8523040382370546 -6.478126474538925 5.10618097110986
 }
 Background {
   skyColor [
@@ -45,7 +45,7 @@ RectangleArena {
   }
 }
 SolidBox {
-  translation -0.5 1.1 0.05
+  translation -1.1 -0.5 0.05
   name "Obstacle_Red"
   size 0.045 0.045 0.1
   appearance PBRAppearance {
@@ -65,7 +65,7 @@ SolidBox {
   }
 }
 SolidBox {
-  translation -1.1 -0.5 0.05
+  translation 1.1 -0.5 0.05
   name "Obstacle_Red(2)"
   size 0.045 0.045 0.1
   appearance PBRAppearance {
@@ -75,28 +75,8 @@ SolidBox {
   }
 }
 SolidBox {
-  translation 0.9 -0.5 0.05
+  translation 0 1.1 0.05
   name "Obstacle_Green"
-  size 0.045 0.045 0.1
-  appearance PBRAppearance {
-    baseColor 0 0.545 0.161
-    roughness 0.6
-    metalness 0
-  }
-}
-SolidBox {
-  translation 0 -0.9 0.05
-  name "Obstacle_Green(1)"
-  size 0.045 0.045 0.1
-  appearance PBRAppearance {
-    baseColor 0 0.545 0.161
-    roughness 0.6
-    metalness 0
-  }
-}
-SolidBox {
-  translation -0.9 0.5 0.05
-  name "Obstacle_Green(2)"
   size 0.045 0.045 0.1
   appearance PBRAppearance {
     baseColor 0 0.545 0.161
@@ -147,7 +127,7 @@ SolidBox {
   }
 }
 AckermannVehicle {
-  translation -0.231441 -1.01067 0.0300003
+  translation -0.221441 -1.01067 0.0300003
   rotation 0 0 1 -5.307179586466759e-06
   controller "wro_driver"
   trackFront 0.12
