@@ -43,18 +43,18 @@ class WebotsWroEnv(gym.Env):
             low=-1.0, high=1.0, shape=(1,), dtype=np.float32
         )
         
-        # Observation space:
-        # 1. Left wall distance (0 to 1.5m)
-        # 2. Right wall distance (0 to 1.5m)
-        # 3. Front wall distance (0 to 1.5m)
-        # 4. Front-left wall distance (0 to 1.5m)
-        # 5. Front-right wall distance (0 to 1.5m)
-        # 6. Next obstacle local X (relative forward, e.g. -2.0m to 2.0m)
-        # 7. Next obstacle local Y (relative side, e.g. -2.0m to 2.0m)
+        # Observation space (normalized to [0.0, 1.0] for distances and [-1.0, 1.0] for coordinates/color):
+        # 1. Left wall distance (0 to 1.0)
+        # 2. Right wall distance (0 to 1.0)
+        # 3. Front wall distance (0 to 1.0)
+        # 4. Front-left wall distance (0 to 1.0)
+        # 5. Front-right wall distance (0 to 1.0)
+        # 6. Next obstacle local X (relative forward, -1.0 to 1.0)
+        # 7. Next obstacle local Y (relative side, -1.0 to 1.0)
         # 8. Next obstacle color / action requirement (-1.0 for green = pass left, 1.0 for red = pass right, 0.0 for none)
         self.observation_space = spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, 0.0, 0.0, -2.0, -2.0, -1.0], dtype=np.float32),
-            high=np.array([1.5, 1.5, 1.5, 1.5, 1.5, 2.0, 2.0, 1.0], dtype=np.float32),
+            low=np.array([0.0, 0.0, 0.0, 0.0, 0.0, -1.0, -1.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
             dtype=np.float32
         )
         
@@ -82,8 +82,9 @@ class WebotsWroEnv(gym.Env):
         self.steer_left = self.supervisor.getDevice("left_steer")
         self.steer_right = self.supervisor.getDevice("right_steer")
         
-        # Get robot node for teleporting
+        # Get robot node for teleporting and collision tracking
         self.robot_node = self.supervisor.getSelf()
+        self.robot_node.enableContactPointsTracking(self.timestep, includeDescendants=True)
         self.translation_field = self.robot_node.getField("translation")
         self.rotation_field = self.robot_node.getField("rotation")
         
@@ -161,17 +162,63 @@ class WebotsWroEnv(gym.Env):
         # Reset localizers and state variables
         self.imu_yaw_initial = None
         
-        # Read initial sensors to set IMU baseline
-        rpy = self.imu.getRollPitchYaw()
-        imu_yaw_raw = rpy[2] if rpy else 0.0
-        self.imu_yaw_initial = imu_yaw_raw
+        # Collect 10 scans of Lidar data to calibrate starting position (similar to wro_driver.py)
+        collected_scans = []
+        import warnings
         
-        # Teleported pose in estimated coordinate system:
-        # Physical start: [-0.22, -1.01], mapped to: [1.5 - 0.22, 1.5 - 1.01] = [1.28, 0.49]
-        start_x_est = 1.5 + self.initial_translation[0]
-        start_y_est = 1.5 + self.initial_translation[1]
-        self.localizer.set_initial_pose(start_x_est, start_y_est, 0.0)
-        self.icp_localizer.set_initial_pose(start_x_est, start_y_est, 0.0)
+        # Step simulation to accumulate scans while robot remains stationary
+        for _ in range(10):
+            if self.supervisor.step(self.timestep) == -1:
+                break
+            
+            # Read IMU to set/keep baseline
+            rpy = self.imu.getRollPitchYaw()
+            imu_yaw_raw = rpy[2] if rpy else 0.0
+            if self.imu_yaw_initial is None:
+                self.imu_yaw_initial = imu_yaw_raw
+                
+            lidar_data = self.lidar.getRangeImage()
+            if lidar_data is not None and len(lidar_data) > 0:
+                collected_scans.append(lidar_data)
+                
+        # Perform initial pose calibration using OpenCV template matching
+        calibrated = False
+        if len(collected_scans) >= 10:
+            scans_arr = np.array(collected_scans)
+            # Filter invalid values
+            invalid_mask = (scans_arr <= 0.01) | (scans_arr >= 2.0) | np.isinf(scans_arr) | np.isnan(scans_arr)
+            scans_arr[invalid_mask] = np.nan
+            
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                avg_ranges = np.nanmean(scans_arr, axis=0)
+            avg_ranges = np.nan_to_num(avg_ranges, nan=0.0)
+            
+            try:
+                n_rays = len(avg_ranges)
+                angle_inc = -2.0 * math.pi / n_rays if n_rays > 0 else 0.0
+                angle_offset = math.pi / 2
+                
+                x_init, y_init, yaw_init, direction, debug_img = self.localizer.calibrate_initial_pose(
+                    avg_ranges=avg_ranges,
+                    angle_offset=angle_offset,
+                    angle_inc=angle_inc
+                )
+                #print(f"[Gym Env Calibration] Best candidate found at: x={x_init:.3f}m, y={y_init:.3f}m, yaw={yaw_init:.3f} rad ({math.degrees(yaw_init):.1f}°)")
+                #print(f"[Gym Env Calibration] Resolved driving direction: {direction}")
+                
+                self.localizer.set_initial_pose(x_init, y_init, yaw_init)
+                self.icp_localizer.set_initial_pose(x_init, y_init, yaw_init)
+                calibrated = True
+            except Exception as e:
+                print(f"[Gym Env Calibration] Error during calibration: {e}")
+                
+        if not calibrated:
+            # Fallback
+            start_x_est = 1.5 + self.initial_translation[0]
+            start_y_est = 1.5 + self.initial_translation[1]
+            self.localizer.set_initial_pose(start_x_est, start_y_est, 0.0)
+            self.icp_localizer.set_initial_pose(start_x_est, start_y_est, 0.0)
         
         self.obstacle_mapper.obstacles = []
         self.passed_obstacle_ids = set()
@@ -249,14 +296,18 @@ class WebotsWroEnv(gym.Env):
                     else:
                         next_obs_color = 0.0
                         
+        # Scale to normalize the observations:
+        # Lidar distances (indices 0 to 4) are currently capped at 1.5m -> divide by 1.5 to get [0, 1.0]
+        # Obstacle X and Y (indices 5 and 6) are currently in [-2.0, 2.0] -> divide by 2.0 to get [-1.0, 1.0]
+        # Obstacle color (index 7) is already in [-1.0, 1.0]
         obs_vector = np.array([
-            left_dist,
-            right_dist,
-            front_dist,
-            front_left_dist,
-            front_right_dist,
-            next_obs_x,
-            next_obs_y,
+            left_dist / 1.5,
+            right_dist / 1.5,
+            front_dist / 1.5,
+            front_left_dist / 1.5,
+            front_right_dist / 1.5,
+            next_obs_x / 2.0,
+            next_obs_y / 2.0,
             next_obs_color
         ], dtype=np.float32)
         
@@ -297,13 +348,19 @@ class WebotsWroEnv(gym.Env):
         ry = self.icp_localizer.Y_real
         ryaw = self.icp_localizer.yaw_real
         
-        # Check collision via Lidar distances
-        lidar_data = self.lidar.getRangeImage()
+        # Check collision via Webots physics contact points (chassis or wheels touching wall/obstacle)
         collision = False
-        if lidar_data is not None and len(lidar_data) > 0:
-            valid_ranges = [r for r in lidar_data if r > 0.01 and not np.isnan(r) and not np.isinf(r)]
-            if len(valid_ranges) > 0 and min(valid_ranges) < 0.11:
-                collision = True
+        try:
+            contact_points = self.robot_node.getContactPoints(includeDescendants=True)
+            for cp in contact_points:
+                # cp.getPoint() returns [x, y, z] in global coordinates.
+                # Floor contacts are at z ≈ 0.0m.
+                # Wall or obstacle contacts are at z > 0.01m (1cm) since the chassis and wheels contact them higher.
+                if cp.getPoint()[2] > 0.01:
+                    collision = True
+                    break
+        except Exception as e:
+            print(f"[Gym Env] Error checking contact points: {e}")
                 
         if collision:
             reward -= 15.0 # High collision penalty
@@ -332,25 +389,35 @@ class WebotsWroEnv(gym.Env):
             (1.0, 0.5),
         ]
         
-        next_checkpoint_idx = (self.current_checkpoint_idx + 1) % len(checkpoints)
-        target_cp = checkpoints[next_checkpoint_idx]
+        # Check if we reached the next checkpoint or skipped to the one after it
+        checkpoint_reached = False
+        for lookahead in [1, 2]:
+            idx = (self.current_checkpoint_idx + lookahead) % len(checkpoints)
+            target_cp = checkpoints[idx]
+            dist_to_cp = math.hypot(rx - target_cp[0], ry - target_cp[1])
+            if dist_to_cp < 0.55:  # Increased from 0.35 to 0.55 to be robust against wall-hugging/swerving
+                # Check if we crossed/landed on index 0 (lap completion)
+                crossed_zero = False
+                for i in range(1, lookahead + 1):
+                    check_idx = (self.current_checkpoint_idx + i) % len(checkpoints)
+                    if check_idx == 0:
+                        crossed_zero = True
+                
+                self.current_checkpoint_idx = idx
+                reward += 3.0 * lookahead  # Reward proportional to checkpoints cleared
+                self.steps_since_last_checkpoint = 0
+                checkpoint_reached = True
+                
+                if crossed_zero:
+                    reward += 10.0
+                    print("[Gym Env] LAP completed! Bonus reward +10.0")
+                break
         
-        # Distance to next checkpoint
-        dist_to_cp = math.hypot(rx - target_cp[0], ry - target_cp[1])
-        if dist_to_cp < 0.35:
-            self.current_checkpoint_idx = next_checkpoint_idx
-            reward += 3.0  # Reward for checkpoint progress
-            self.steps_since_last_checkpoint = 0
-            
-            # Check for lap completion
-            if self.current_checkpoint_idx == 0:
-                reward += 10.0
-                print("[Gym Env] LAP completed! Bonus reward +10.0")
-        else:
+        if not checkpoint_reached:
             self.steps_since_last_checkpoint += 1
             
-        # Stagnation check (Option C): truncate if checkpoint not reached in 6 seconds (60 steps)
-        if self.steps_since_last_checkpoint > 60:
+        # Stagnation check (Option C): truncate if checkpoint not reached in 12 seconds (120 steps)
+        if self.steps_since_last_checkpoint > 120:
             reward -= 5.0
             truncated = True
             print("[Gym Env] TIMEOUT (No progress)! Resetting.")
@@ -376,7 +443,7 @@ class WebotsWroEnv(gym.Env):
             y_loc = -dx * sin_a + dy * cos_a
             
             # Check if robot has just passed it (x_loc goes behind, within lateral range)
-            if -0.3 < x_loc <= 0.0 and math.hypot(x_loc, y_loc) < 0.4:
+            if -0.3 < x_loc <= 0.0 and math.hypot(x_loc, y_loc) < 0.8:
                 self.passed_obstacle_ids.add(obs_key)
                 
                 # Check correct side:
@@ -384,6 +451,7 @@ class WebotsWroEnv(gym.Env):
                     # Red obstacle: must pass on the right (obstacle on left side, y_loc > 0)
                     if y_loc > 0:
                         reward += 5.0
+                        self.steps_since_last_checkpoint = 0  # Reset stagnation steps on correct obstacle pass
                         print(f"[Gym Env] RED Obstacle passed CORRECTLY! Reward +5.0")
                     else:
                         reward -= 5.0
@@ -393,6 +461,7 @@ class WebotsWroEnv(gym.Env):
                     # Green obstacle: must pass on the left (obstacle on right side, y_loc < 0)
                     if y_loc < 0:
                         reward += 5.0
+                        self.steps_since_last_checkpoint = 0  # Reset stagnation steps on correct obstacle pass
                         print(f"[Gym Env] GREEN Obstacle passed CORRECTLY! Reward +5.0")
                     else:
                         reward -= 5.0
