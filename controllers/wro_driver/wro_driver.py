@@ -27,11 +27,34 @@ TARGET_SPEED = 5.0        # rad/s (speed of the wheels)
 WHEELBASE = 0.14          # m
 TRACK_FRONT = 0.12        # m
 WHEEL_RADIUS = 0.03       # m (tireRadius from .wbt)
+USE_RL = True             # Enable Reinforcement Learning navigation
 
 # --- PID configuration ---
 P_GAIN = 1.5
 D_GAIN = 3.0
 MAX_STEERING = 0.8        # rad
+
+# --- Load ONNX Model ---
+ort_session = None
+if USE_RL:
+    try:
+        import onnxruntime as ort
+        import os
+        
+        # Look for wro_model.onnx in the same folder as this script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(script_dir, "wro_model.onnx")
+        
+        if os.path.exists(model_path):
+            print(f"[RL] Loading ONNX model from {model_path}...")
+            ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+            print("[RL] ONNX model loaded successfully!")
+        else:
+            print(f"[RL Warning] Model file not found at {model_path}. Falling back to Rules-based.")
+            USE_RL = False
+    except Exception as e:
+        print(f"[RL Warning] Failed to load ONNX runtime/model: {e}. Falling back to Rules-based.")
+        USE_RL = False
 
 # --- Helper ---
 def clamp(value, min_val, max_val):
@@ -195,8 +218,8 @@ def run_estimation(localizer, icp_localizer, obstacle_mapper, sensor_data):
                     cv2.imshow("Calibration Result", debug_img)
                     print(f"[Calibration] Best candidate found at: x={x_init:.3f}m, y={y_init:.3f}m, yaw={yaw_init:.3f} rad ({math.degrees(yaw_init):.1f}°)")
                     print(f"[Calibration] Resolved driving direction: {direction}")
-                    print("[Calibration] Starting in 2 seconds...")
-                    cv2.waitKey(2000)
+                    print("[Calibration] Starting in 0.001 seconds...")
+                    cv2.waitKey(1)
                     
                     # Initial-Pose setzen
                     localizer.set_initial_pose(x_init, y_init, yaw_init)
@@ -238,7 +261,7 @@ def run_planning(pose, sensor_data):
     Verarbeitet Zustandsübergänge der State Machine und berechnet den Soll-Pfad
     sowie die Soll-Geschwindigkeit und den Soll-Lenkwinkel.
     """
-    global state, prev_error
+    global state, prev_error, USE_RL, ort_session
     
     target_speed = 0.0
     target_steering = 0.0
@@ -258,47 +281,124 @@ def run_planning(pose, sensor_data):
             state = "ERROR"
             return 0.0, 0.0
             
-        # sub: EXPLORE - Wandverfolgung & Hindernisvermeidung
-        target_speed = TARGET_SPEED
-        
-        def cap(dist):
-            return min(dist, 1.5)
-
-        # Distanzen ermitteln: 90=Links, 270=Rechts, 180=Vorne, 135=Vorne-Links, 225=Vorne-Rechts
-        right_dist = cap(lidar_data[270])
-        left_dist = cap(lidar_data[90])
-        front_dist = lidar_data[180]
-        front_right_dist = cap(lidar_data[225])
-        front_left_dist = cap(lidar_data[135])
-        
-        # 1. Zentrierung & Parallelfahrt (PD-Regler)
-        current_diff = left_dist - right_dist
-        derivative = current_diff - prev_error
-        prev_error = current_diff
-        
-        raw_steering = -(P_GAIN * current_diff + D_GAIN * derivative)
-        
-        # 2. Seitenwandschutz (Sicherheitsabstand min. 20cm)
-        min_side = min(left_dist, right_dist)
-        if min_side < 0.2:
-            safety_force = (0.2 - min_side) * 5.0 
-            if left_dist < right_dist:
-                raw_steering += safety_force  # Nach rechts lenken
-            else:
-                raw_steering -= safety_force  # Nach links lenken
-        
-        # 3. Kurvenfahrt / Frontwand-Ausweichmanöver
-        if front_dist < 1.0:
-            corner_force = (1.0 - front_dist)**2
-            CORNER_GAIN = 8.0 
+        if USE_RL and ort_session is not None:
+            # --- Reinforcement Learning Path Planning ---
+            rx, ry, ryaw = pose
             
-            if front_left_dist > front_right_dist:
-                raw_steering -= (corner_force * CORNER_GAIN)   # Links lenken
-            else:
-                raw_steering += (corner_force * CORNER_GAIN)   # Rechts lenken
-        
-        # Begrenzung des Lenkwinkels
-        target_steering = clamp(raw_steering, -MAX_STEERING, MAX_STEERING)
+            def cap(dist):
+                return min(dist, 1.5)
+                
+            right_dist = cap(lidar_data[270])
+            left_dist = cap(lidar_data[90])
+            front_dist = cap(lidar_data[180])
+            front_right_dist = cap(lidar_data[225])
+            front_left_dist = cap(lidar_data[135])
+            
+            # Find next obstacle in front
+            next_obs_x = 2.0
+            next_obs_y = 0.0
+            next_obs_color = 0.0 # 0=gray/none, 1=red, -1=green
+            
+            alpha = ryaw + math.pi / 2.0
+            cos_a = math.cos(alpha)
+            sin_a = math.sin(alpha)
+            
+            best_dist = float('inf')
+            for obs in obstacle_mapper.obstacles:
+                ox, oy = obs.position
+                dx = ox - rx
+                dy = oy - ry
+                x_loc = dx * cos_a + dy * sin_a
+                y_loc = -dx * sin_a + dy * cos_a
+                
+                # Check if obstacle is in front of the vehicle
+                if x_loc > 0.0:
+                    dist = math.hypot(x_loc, y_loc)
+                    if dist < best_dist and dist < 2.0:
+                        best_dist = dist
+                        next_obs_x = x_loc
+                        next_obs_y = y_loc
+                        if obs.color == "red":
+                            next_obs_color = 1.0
+                        elif obs.color == "green":
+                            next_obs_color = -1.0
+                        else:
+                            next_obs_color = 0.0
+                            
+            # Build normalized observation vector (matching wro_gym_env.py)
+            obs_vector = np.array([
+                left_dist / 1.5,
+                right_dist / 1.5,
+                front_dist / 1.5,
+                front_left_dist / 1.5,
+                front_right_dist / 1.5,
+                next_obs_x / 2.0,
+                next_obs_y / 2.0,
+                next_obs_color
+            ], dtype=np.float32)
+            
+            # Clip bounds matching wro_gym_env.py
+            low_bounds = np.array([0.0, 0.0, 0.0, 0.0, 0.0, -1.0, -1.0, -1.0], dtype=np.float32)
+            high_bounds = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32)
+            obs_vector = np.clip(obs_vector, low_bounds, high_bounds)
+            
+            # Run ONNX inference
+            try:
+                obs_input = np.array([obs_vector], dtype=np.float32)
+                ort_inputs = {ort_session.get_inputs()[0].name: obs_input}
+                ort_outs = ort_session.run(None, ort_inputs)
+                
+                # ONNX policy outputs (action, value, log_prob)
+                action = ort_outs[0][0][0]
+                
+                target_steering = action * MAX_STEERING
+                target_speed = TARGET_SPEED
+            except Exception as e:
+                print(f"[RL Error] Inference failed: {e}. Falling back to Rules-based.")
+                USE_RL = False
+                return run_planning(pose, sensor_data)
+        else:
+            # --- Rules-based Path Planning ---
+            target_speed = TARGET_SPEED
+            
+            def cap(dist):
+                return min(dist, 1.5)
+    
+            # Distanzen ermitteln: 90=Links, 270=Rechts, 180=Vorne, 135=Vorne-Links, 225=Vorne-Rechts
+            right_dist = cap(lidar_data[270])
+            left_dist = cap(lidar_data[90])
+            front_dist = lidar_data[180]
+            front_right_dist = cap(lidar_data[225])
+            front_left_dist = cap(lidar_data[135])
+            
+            # 1. Zentrierung & Parallelfahrt (PD-Regler)
+            current_diff = left_dist - right_dist
+            derivative = current_diff - prev_error
+            prev_error = current_diff
+            
+            raw_steering = -(P_GAIN * current_diff + D_GAIN * derivative)
+            
+            # 2. Seitenwandschutz (Sicherheitsabstand min. 20cm)
+            min_side = min(left_dist, right_dist)
+            if min_side < 0.2:
+                safety_force = (0.2 - min_side) * 5.0 
+                if left_dist < right_dist:
+                    raw_steering += safety_force  # Nach rechts lenken
+                else:
+                    raw_steering -= safety_force  # Nach links lenken
+            
+            # 3. Kurvenfahrt / Frontwand-Ausweichmanöver
+            if front_dist < 1.0:
+                corner_force = (1.0 - front_dist)**2
+                CORNER_GAIN = 8.0 
+                
+                if front_left_dist > front_right_dist:
+                    raw_steering -= (corner_force * CORNER_GAIN)   # Links lenken
+                else:
+                    raw_steering += (corner_force * CORNER_GAIN)   # Rechts lenken
+            
+            # Begrenzung des Lenkwinkels
+            target_steering = clamp(raw_steering, -MAX_STEERING, MAX_STEERING)
         
     elif state == "COMPLETED":
         target_speed = 0.0
@@ -362,6 +462,21 @@ while robot.step(TIME_STEP) != -1:
         vis_img = icp_localizer.render() if initial_pose_found else localizer.render()
         if initial_pose_found:
             vis_img = obstacle_mapper.render(vis_img, robot_pose, icp_localizer.scale, icp_localizer.window_size)
+            
+            # Overlay mode indicator text
+            mode_text = "Planning: RL (ONNX)" if USE_RL else "Planning: Rules-based"
+            text_color = (0, 255, 0) if USE_RL else (0, 165, 255) # Green vs Orange BGR
+            cv2.putText(
+                vis_img,
+                mode_text,
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                text_color,
+                2,
+                lineType=cv2.LINE_AA
+            )
+            
             if "camera_image" in sensor_data:
                 cam_debug = obstacle_mapper.render_camera(sensor_data["camera_image"], robot_pose)
                 try:
