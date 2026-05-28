@@ -44,7 +44,7 @@ RectangleArena {
     colorOverride 0 0 0
   }
 }
-SolidBox {
+DEF OBSTACLE_RED_0 SolidBox {
   translation -1.1 -0.5 0.05
   name "Obstacle_Red"
   size 0.045 0.045 0.1
@@ -54,7 +54,7 @@ SolidBox {
     metalness 0
   }
 }
-SolidBox {
+DEF OBSTACLE_RED_1 SolidBox {
   translation 1.1 0.5 0.05
   name "Obstacle_Red(1)"
   size 0.045 0.045 0.1
@@ -64,7 +64,7 @@ SolidBox {
     metalness 0
   }
 }
-SolidBox {
+DEF OBSTACLE_RED_2 SolidBox {
   translation -0.5 0.9 0.05
   name "Obstacle_Red(2)"
   size 0.045 0.045 0.1
@@ -74,9 +74,29 @@ SolidBox {
     metalness 0
   }
 }
-SolidBox {
+DEF OBSTACLE_GREEN_0 SolidBox {
   translation 1.1 -0.5 0.05
   name "Obstacle_Green"
+  size 0.045 0.045 0.1
+  appearance PBRAppearance {
+    baseColor 0 0.545 0.161
+    roughness 0.6
+    metalness 0
+  }
+}
+DEF OBSTACLE_GREEN_1 SolidBox {
+  translation 0 0 0.05
+  name "Obstacle_Green(1)"
+  size 0.045 0.045 0.1
+  appearance PBRAppearance {
+    baseColor 0 0.545 0.161
+    roughness 0.6
+    metalness 0
+  }
+}
+DEF OBSTACLE_GREEN_2 SolidBox {
+  translation 0 0 0.05
+  name "Obstacle_Green(2)"
   size 0.045 0.045 0.1
   appearance PBRAppearance {
     baseColor 0 0.545 0.161
