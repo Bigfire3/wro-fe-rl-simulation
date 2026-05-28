@@ -217,8 +217,8 @@ class WebotsWroEnv(gym.Env):
             # Fallback
             start_x_est = 1.5 + self.initial_translation[0]
             start_y_est = 1.5 + self.initial_translation[1]
-            self.localizer.set_initial_pose(start_x_est, start_y_est, 0.0)
-            self.icp_localizer.set_initial_pose(start_x_est, start_y_est, 0.0)
+            self.localizer.set_initial_pose(start_x_est, start_y_est, -math.pi / 2)
+            self.icp_localizer.set_initial_pose(start_x_est, start_y_est, -math.pi / 2)
         
         self.obstacle_mapper.obstacles = []
         self.passed_obstacle_ids = set()
@@ -454,7 +454,7 @@ class WebotsWroEnv(gym.Env):
                         self.steps_since_last_checkpoint = 0  # Reset stagnation steps on correct obstacle pass
                         print(f"[Gym Env] RED Obstacle passed CORRECTLY! Reward +5.0")
                     else:
-                        reward -= 5.0
+                        reward -= 10.0
                         terminated = True
                         print(f"[Gym Env] RED Obstacle passed INCORRECTLY! Resetting.")
                 elif obstacle.color == "green":
@@ -464,12 +464,12 @@ class WebotsWroEnv(gym.Env):
                         self.steps_since_last_checkpoint = 0  # Reset stagnation steps on correct obstacle pass
                         print(f"[Gym Env] GREEN Obstacle passed CORRECTLY! Reward +5.0")
                     else:
-                        reward -= 5.0
+                        reward -= 10.0
                         terminated = True
                         print(f"[Gym Env] GREEN Obstacle passed INCORRECTLY! Resetting.")
                         
-        # Small survival reward to encourage keeping speed up
-        reward += 0.05
+        # Small time penalty to encourage speed and efficiency
+        reward -= 0.01
         
         self.total_steps += 1
         # Hard timeout after 1000 steps (100 seconds)

@@ -41,6 +41,12 @@ def main():
 
     render_training = not args.no_render
     
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+    models_dir = os.path.join(project_root, "models")
+    os.makedirs(models_dir, exist_ok=True)
+    model_save_path = os.path.join(models_dir, "wro_ppo_model")
+    
     print("=" * 60)
     print("WRO FUTURE ENGINEERS - RL TRAINING SCRIPT")
     print("=" * 60)
@@ -67,9 +73,10 @@ def main():
         n_steps=2048,
         batch_size=64,
         n_epochs=10,
-        gamma=0.99,
+        gamma=0.95,
         gae_lambda=0.95,
         clip_range=0.2,
+        ent_coef=0.01,
         verbose=1,
         tensorboard_log=tb_log
     )
@@ -82,8 +89,8 @@ def main():
         model.learn(total_timesteps=args.timesteps, callback=callback, tb_log_name="ppo_wro" if tb_log is not None else None)
         
         # Save model if completed normally
-        model.save("wro_ppo_model")
-        print("\nModell erfolgreich unter 'wro_ppo_model.zip' gespeichert!")
+        model.save(model_save_path)
+        print(f"\nModell erfolgreich unter '{model_save_path}.zip' gespeichert!")
     except KeyboardInterrupt:
         print("\n[Training] Training wurde vom Benutzer abgebrochen (Ctrl+C). Modell wurde NICHT gespeichert.")
     except TrainingAbortException as e:

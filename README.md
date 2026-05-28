@@ -27,6 +27,8 @@ This repository contains the Webots simulation for the WRO Future Engineers cate
 ---
 *Created for WRO Future Engineers.*
 
+.venv\Scripts\python.exe controllers/wro_driver/train.py --timesteps 150000 --no-render
+
 ## Links
 
 https://github.com/DennisLiu1993/Fastest_Image_Pattern_Matching
