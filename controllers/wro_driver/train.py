@@ -35,7 +35,7 @@ class RenderCallback(BaseCallback):
 
 def main():
     parser = argparse.ArgumentParser(description="WRO Reinforcement Learning Training")
-    parser.add_argument("--timesteps", type=int, default=150000, help="Total training timesteps")
+    parser.add_argument("--timesteps", type=int, default=500000, help="Total training timesteps")
     parser.add_argument("--no-render", action="store_true", help="Disable OpenCV rendering during training")
     args = parser.parse_args()
 

@@ -169,9 +169,9 @@ class WebotsWroEnv(gym.Env):
         self.steer_left.setPosition(0.0)
         self.steer_right.setPosition(0.0)
         
-        # Zufällige Pose in Schätzer-Koordinaten wählen (1.1, 0.1) - (1.9, 0.9)
-        start_x_est = self.np_random.uniform(1.1, 1.9)
-        start_y_est = self.np_random.uniform(0.1, 0.9)
+        # Zufällige Pose in Schätzer-Koordinaten wählen (1.2, 0.2) - (1.8, 0.8)
+        start_x_est = self.np_random.uniform(1.2, 1.8)
+        start_y_est = self.np_random.uniform(0.2, 0.8)
         yaw_est = self.np_random.uniform(-np.pi, np.pi)
         
         # In Webots-Koordinaten umrechnen
