@@ -10,6 +10,28 @@ Refactored to follow a strict 4-Stage Software Pipeline:
 - Stage 4: Control
 """
 
+import sys
+import os
+
+# Try to find and inject the virtual environment's site-packages path to allow loading ONNX and other libraries
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+
+# Potential paths to site-packages depending on OS
+site_package_paths = [
+    os.path.join(project_root, ".venv", "Lib", "site-packages"),
+]
+# For Unix systems, find the python subdirectories in .venv/lib
+venv_lib_dir = os.path.join(project_root, ".venv", "lib")
+if os.path.exists(venv_lib_dir):
+    for sub in os.listdir(venv_lib_dir):
+        if sub.startswith("python"):
+            site_package_paths.append(os.path.join(venv_lib_dir, sub, "site-packages"))
+
+for path in site_package_paths:
+    if os.path.exists(path) and path not in sys.path:
+        sys.path.insert(0, path)
+
 import math
 import time
 import warnings
@@ -23,7 +45,7 @@ from obstacle_mapper import ObstacleMapper
 
 # --- configuration ---
 TIME_STEP = 32            # ms
-TARGET_SPEED = 5.0        # rad/s (speed of the wheels)
+TARGET_SPEED = 10.0        # rad/s (speed of the wheels)
 WHEELBASE = 0.14          # m
 TRACK_FRONT = 0.12        # m
 WHEEL_RADIUS = 0.03       # m (tireRadius from .wbt)
@@ -41,9 +63,10 @@ if USE_RL:
         import onnxruntime as ort
         import os
         
-        # Look for wro_model.onnx in the same folder as this script
+        # Look for wro_model.onnx in the models folder of the project root
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(script_dir, "wro_model.onnx")
+        project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+        model_path = os.path.join(project_root, "models", "wro_model.onnx")
         
         if os.path.exists(model_path):
             print(f"[RL] Loading ONNX model from {model_path}...")
@@ -350,6 +373,7 @@ def run_planning(pose, sensor_data):
                 
                 # ONNX policy outputs (action, value, log_prob)
                 action = ort_outs[0][0][0]
+                action = clamp(action, -1.0, 1.0)
                 
                 target_steering = action * MAX_STEERING
                 target_speed = TARGET_SPEED
