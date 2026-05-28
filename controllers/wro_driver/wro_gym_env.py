@@ -101,6 +101,17 @@ class WebotsWroEnv(gym.Env):
         self.icp_localizer = TranslationICPLocalizer()
         self.obstacle_mapper = ObstacleMapper()
         
+        # Get obstacle translation fields from DEF names for reset randomization
+        self.red_obstacle_fields = []
+        self.green_obstacle_fields = []
+        for i in range(3):
+            node_red = self.supervisor.getFromDef(f"OBSTACLE_RED_{i}")
+            if node_red:
+                self.red_obstacle_fields.append(node_red.getField("translation"))
+            node_green = self.supervisor.getFromDef(f"OBSTACLE_GREEN_{i}")
+            if node_green:
+                self.green_obstacle_fields.append(node_green.getField("translation"))
+        
         # Constants
         self.MAX_STEERING = 0.8
         self.TARGET_SPEED = 5.0
@@ -120,6 +131,16 @@ class WebotsWroEnv(gym.Env):
         self.steps_since_last_checkpoint = 0
         self.total_steps = 0
         self.passed_obstacle_ids = set()
+        self.driving_direction = "CCW"
+        
+        # Centralized checkpoints (16 points around 2.0x2.0m loop centered at 1.5,1.5)
+        self.checkpoints = [
+            (1.5, 0.5), (2.0, 0.5), (2.5, 0.5), (2.5, 1.0),
+            (2.5, 1.5), (2.5, 2.0), (2.5, 2.5), (2.0, 2.5), (1.5, 2.5),
+            (1.0, 2.5), (0.5, 2.5), (0.5, 2.0), (0.5, 1.5), (0.5, 1.0),
+            (0.5, 0.5), (1.0, 0.5)
+        ]
+        self.checkpoints_cleared_this_lap = 0
 
     def ackermann_angles(self, target_angle):
         if abs(target_angle) < 1e-6:
@@ -148,9 +169,73 @@ class WebotsWroEnv(gym.Env):
         self.steer_left.setPosition(0.0)
         self.steer_right.setPosition(0.0)
         
-        # Reset position in Webots
-        self.translation_field.setSFVec3f(self.initial_translation)
-        self.rotation_field.setSFRotation(self.initial_rotation)
+        # Zufällige Pose in Schätzer-Koordinaten wählen (1.1, 0.1) - (1.9, 0.9)
+        start_x_est = self.np_random.uniform(1.1, 1.9)
+        start_y_est = self.np_random.uniform(0.1, 0.9)
+        yaw_est = self.np_random.uniform(-np.pi, np.pi)
+        
+        # In Webots-Koordinaten umrechnen
+        x_webots = start_x_est - 1.5
+        y_webots = start_y_est - 1.5
+        z_webots = 0.0300003  # Höhe konstant halten
+        angle_webots = yaw_est + math.pi / 2.0
+        
+        # Position & Rotation in Webots anwenden
+        self.translation_field.setSFVec3f([x_webots, y_webots, z_webots])
+        self.rotation_field.setSFRotation([0.0, 0.0, 1.0, angle_webots])
+        
+        # Hindernisse zurücksetzen und zufällig neu platzieren
+        for field in self.red_obstacle_fields + self.green_obstacle_fields:
+            field.setSFVec3f([0.0, 0.0, 0.05])
+            
+        if self.red_obstacle_fields or self.green_obstacle_fields:
+            available_red = list(self.red_obstacle_fields)
+            available_green = list(self.green_obstacle_fields)
+            
+            # Hindernisse stehen nur im Westen, Norden, Osten (nicht im Süden)
+            sections = ["Westen", "Norden", "Osten"]
+            for section in sections:
+                # Wähle Szenario: 0 (kein Hindernis), 1 (Mitte), 2 (ein Rand), 3 (beide Ränder)
+                scenario = self.np_random.choice([0, 1, 2, 3])
+                
+                slots = []
+                if scenario == 1:
+                    slots = [0.0]
+                elif scenario == 2:
+                    slots = [self.np_random.choice([-0.5, 0.5])]
+                elif scenario == 3:
+                    slots = [-0.5, 0.5]
+                    
+                for s in slots:
+                    # Querverschiebung (Lateral) bestimmen
+                    if section == "Westen":
+                        d = self.np_random.choice([-0.9, -1.1])
+                    else:
+                        d = self.np_random.choice([0.9, 1.1])
+                        
+                    # Globale Koordinaten berechnen
+                    if section == "Westen":
+                        x, y = d, s
+                    elif section == "Norden":
+                        x, y = s, d
+                    elif section == "Osten":
+                        x, y = d, s
+                        
+                    # Farbe basierend auf den verfügbaren physischen Boxen bestimmen
+                    chosen_color = None
+                    if available_red and available_green:
+                        chosen_color = self.np_random.choice(["red", "green"])
+                    elif available_red:
+                        chosen_color = "red"
+                    elif available_green:
+                        chosen_color = "green"
+                        
+                    if chosen_color == "red":
+                        field = available_red.pop()
+                        field.setSFVec3f([x, y, 0.05])
+                    elif chosen_color == "green":
+                        field = available_green.pop()
+                        field.setSFVec3f([x, y, 0.05])
         
         # Reset physics
         self.supervisor.simulationResetPhysics()
@@ -205,26 +290,36 @@ class WebotsWroEnv(gym.Env):
                     angle_inc=angle_inc
                 )
                 #print(f"[Gym Env Calibration] Best candidate found at: x={x_init:.3f}m, y={y_init:.3f}m, yaw={yaw_init:.3f} rad ({math.degrees(yaw_init):.1f}°)")
-                #print(f"[Gym Env Calibration] Resolved driving direction: {direction}")
+                print(f"[Gym Env Calibration] Resolved driving direction: {direction}")
                 
                 self.localizer.set_initial_pose(x_init, y_init, yaw_init)
                 self.icp_localizer.set_initial_pose(x_init, y_init, yaw_init)
+                self.driving_direction = direction
                 calibrated = True
             except Exception as e:
                 print(f"[Gym Env Calibration] Error during calibration: {e}")
                 
         if not calibrated:
-            # Fallback
-            start_x_est = 1.5 + self.initial_translation[0]
-            start_y_est = 1.5 + self.initial_translation[1]
-            self.localizer.set_initial_pose(start_x_est, start_y_est, -math.pi / 2)
-            self.icp_localizer.set_initial_pose(start_x_est, start_y_est, -math.pi / 2)
+            # Fallback auf die tatsächlich generierte Pose
+            self.localizer.set_initial_pose(start_x_est, start_y_est, yaw_est)
+            self.icp_localizer.set_initial_pose(start_x_est, start_y_est, yaw_est)
+            # Richtung aus yaw_est ableiten
+            sin_yaw = math.sin(yaw_est)
+            if sin_yaw < 0 or (abs(sin_yaw) < 1e-5 and yaw_est < 0):
+                self.driving_direction = "CCW"
+            else:
+                self.driving_direction = "CW"
         
         self.obstacle_mapper.obstacles = []
         self.passed_obstacle_ids = set()
         
         self.smoothed_steering = 0.0  # Reset low-pass filter matching Stage 4 Control
-        self.current_checkpoint_idx = 0
+        self.checkpoints_cleared_this_lap = 0
+        
+        # Nächstgelegenen Checkpoint ermitteln
+        dists = [math.hypot(start_x_est - cp[0], start_y_est - cp[1]) for cp in self.checkpoints]
+        self.current_checkpoint_idx = int(np.argmin(dists))
+        
         self.steps_since_last_checkpoint = 0
         self.total_steps = 0
         
@@ -368,49 +463,31 @@ class WebotsWroEnv(gym.Env):
             print("[Gym Env] COLLISION detected! Resetting.")
             
         # Checkpoint Progress tracking
-        # Arena midline checkpoints (17 points around 2.0x2.0m loop centered at 1.5,1.5)
-        checkpoints = [
-            (1.28, 0.49), # Start pos
-            (1.6, 0.5),
-            (2.0, 0.5),
-            (2.5, 0.5),   # Corner 1
-            (2.5, 1.0),
-            (2.5, 1.5),   # East center
-            (2.5, 2.0),
-            (2.5, 2.5),   # Corner 2
-            (2.0, 2.5),
-            (1.5, 2.5),   # North center
-            (1.0, 2.5),
-            (0.5, 2.5),   # Corner 3
-            (0.5, 2.0),
-            (0.5, 1.5),   # West center
-            (0.5, 1.0),
-            (0.5, 0.5),   # Corner 4
-            (1.0, 0.5),
-        ]
-        
-        # Check if we reached the next checkpoint or skipped to the one after it
         checkpoint_reached = False
+        step_dir = 1 if self.driving_direction == "CCW" else -1
         for lookahead in [1, 2]:
-            idx = (self.current_checkpoint_idx + lookahead) % len(checkpoints)
-            target_cp = checkpoints[idx]
+            idx = (self.current_checkpoint_idx + lookahead * step_dir) % len(self.checkpoints)
+            target_cp = self.checkpoints[idx]
             dist_to_cp = math.hypot(rx - target_cp[0], ry - target_cp[1])
             if dist_to_cp < 0.55:  # Increased from 0.35 to 0.55 to be robust against wall-hugging/swerving
                 # Check if we crossed/landed on index 0 (lap completion)
                 crossed_zero = False
                 for i in range(1, lookahead + 1):
-                    check_idx = (self.current_checkpoint_idx + i) % len(checkpoints)
+                    check_idx = (self.current_checkpoint_idx + i * step_dir) % len(self.checkpoints)
                     if check_idx == 0:
                         crossed_zero = True
                 
                 self.current_checkpoint_idx = idx
                 reward += 3.0 * lookahead  # Reward proportional to checkpoints cleared
                 self.steps_since_last_checkpoint = 0
+                self.checkpoints_cleared_this_lap += lookahead
                 checkpoint_reached = True
                 
                 if crossed_zero:
-                    reward += 10.0
-                    print("[Gym Env] LAP completed! Bonus reward +10.0")
+                    if self.checkpoints_cleared_this_lap >= len(self.checkpoints) - 2:
+                        reward += 10.0
+                        print(f"[Gym Env] LAP completed ({self.driving_direction})! Bonus reward +10.0")
+                    self.checkpoints_cleared_this_lap = 0
                 break
         
         if not checkpoint_reached:
@@ -498,14 +575,9 @@ class WebotsWroEnv(gym.Env):
         vis_img = self.obstacle_mapper.render(vis_img, [rx, ry, ryaw], self.icp_localizer.scale, self.icp_localizer.window_size)
         
         # Draw next checkpoint
-        checkpoints = [
-            (1.28, 0.49), (1.6, 0.5), (2.0, 0.5), (2.5, 0.5), (2.5, 1.0),
-            (2.5, 1.5), (2.5, 2.0), (2.5, 2.5), (2.0, 2.5), (1.5, 2.5),
-            (1.0, 2.5), (0.5, 2.5), (0.5, 2.0), (0.5, 1.5), (0.5, 1.0),
-            (0.5, 0.5), (1.0, 0.5)
-        ]
-        next_idx = (self.current_checkpoint_idx + 1) % len(checkpoints)
-        cx, cy = checkpoints[next_idx]
+        step_dir = 1 if self.driving_direction == "CCW" else -1
+        next_idx = (self.current_checkpoint_idx + step_dir) % len(self.checkpoints)
+        cx, cy = self.checkpoints[next_idx]
         cx_px = int(cx * self.icp_localizer.scale)
         cy_px = int(self.icp_localizer.window_size - cy * self.icp_localizer.scale)
         cv2.circle(vis_img, (cx_px, cy_px), 6, (0, 255, 255), -1, lineType=cv2.LINE_AA) # Yellow checkpoint indicator
