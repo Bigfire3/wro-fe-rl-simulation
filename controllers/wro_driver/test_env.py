@@ -51,8 +51,8 @@ def main():
                 if step % 10 == 0:
                     print(f"Schritt {step:03d} | Pose: x={info['x']:.2f}, y={info['y']:.2f}, yaw={info['yaw']:.2f} | "
                           f"Checkpoint: {info['checkpoint']} | Reward: {reward:+.2f} | Total Reward: {total_reward:+.2f}")
-                    print(f"          Obs (Wand_L, Wand_R, Wand_F, Obst_X, Obst_Y, Color): "
-                          f"{obs[0]:.2f}, {obs[1]:.2f}, {obs[2]:.2f}, {obs[5]:.2f}, {obs[6]:.2f}, {obs[7]:.1f}")
+                    print(f"          Obs (v_x, steer, lat_e, head_e, la30, la60, obs1_x, obs1_y, obs1_c): "
+                          f"{obs[0]:.2f}, {obs[1]:.2f}, {obs[2]:.2f}, {obs[3]:.2f}, {obs[4]:.2f}, {obs[5]:.2f}, {obs[6]:.2f}, {obs[7]:.2f}, {obs[8]:.1f}")
                 
                 # Kurze Pause, um die Konsole lesbar zu halten
                 time.sleep(0.02)

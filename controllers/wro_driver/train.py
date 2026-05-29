@@ -69,16 +69,17 @@ def main():
     model = PPO(
         "MlpPolicy",
         env,
-        learning_rate=3e-4,
-        n_steps=2048,
-        batch_size=64,
+        learning_rate=2e-4,
+        n_steps=8192,
+        batch_size=256,
         n_epochs=10,
-        gamma=0.95,
+        gamma=0.98,
         gae_lambda=0.95,
         clip_range=0.2,
         ent_coef=0.01,
         verbose=1,
-        tensorboard_log=tb_log
+        tensorboard_log=tb_log,
+        policy_kwargs=dict(net_arch=[64, 64])
     )
     
     # Initialize callback
