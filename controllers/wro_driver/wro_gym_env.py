@@ -4,6 +4,7 @@ import numpy as np
 import math
 import cv2
 from obstacle_randomizer import randomize_obstacles
+from obs_visualizer import draw_observation_window
 
 try:
     from controller import Supervisor
@@ -135,6 +136,15 @@ class WebotsWroEnv(gym.Env):
             (0.5, 0.5), (1.0, 0.5)
         ]
         self.checkpoints_cleared_this_lap = 0
+        
+        self.raw_obs = np.zeros(12, dtype=np.float32)
+        self.obs_vector = np.zeros(12, dtype=np.float32)
+        self.best_closest = None
+        self.p_30 = None
+        self.p_60 = None
+        self.rx = 1.5
+        self.ry = 0.5
+        self.ryaw = 0.0
 
     def ackermann_angles(self, target_angle):
         if abs(target_angle) < 1e-6:
@@ -362,13 +372,11 @@ class WebotsWroEnv(gym.Env):
         left_normal = np.array([-best_tangent[1], best_tangent[0]])
         p = np.array([rx, ry])
         lateral_error = np.dot(p - best_closest, left_normal)
-        lateral_error_normalized = np.clip(lateral_error / 0.5, -1.0, 1.0)
         
         # 2. heading_error
         theta_tangent = math.atan2(best_tangent[1], best_tangent[0])
         diff_yaw = ryaw - theta_tangent
         diff_yaw = (diff_yaw + math.pi) % (2.0 * math.pi) - math.pi
-        heading_error_normalized = np.clip(diff_yaw / (math.pi / 2.0), -1.0, 1.0)
         
         # 3. lookahead points (30cm & 60cm)
         s_current = best_segment_idx * 2.0 + best_t * 2.0
@@ -412,37 +420,52 @@ class WebotsWroEnv(gym.Env):
         # Sort by relative x_loc ascending
         valid_obstacles.sort(key=lambda item: item["x_loc"])
         
-        obs_features = []
-        for i in range(2):
-            if i < len(valid_obstacles):
-                o = valid_obstacles[i]
-                rel_x = np.clip(o["x_loc"] / 2.0, -1.0, 1.0)
-                rel_y = np.clip(o["y_loc"] / 2.0, -1.0, 1.0)
-                color = o["color"]
-            else:
-                rel_x = 1.0  # 2.0 / 2.0
-                rel_y = 0.0
-                color = 0.0
-            obs_features.extend([rel_x, rel_y, color])
-            
-        # Build observation vector
-        obs_vector = np.array([
-            np.clip(ego_v_x, -1.0, 1.0),
-            np.clip(self.smoothed_steering / self.MAX_STEERING, -1.0, 1.0),
-            lateral_error_normalized,
-            heading_error_normalized,
-            np.clip(y_loc_30 / 0.3, -1.0, 1.0),
-            np.clip(y_loc_60 / 0.6, -1.0, 1.0),
-            obs_features[0],
-            obs_features[1],
-            obs_features[2],
-            obs_features[3],
-            obs_features[4],
-            obs_features[5]
+        # Build raw observation vector
+        raw_obs = np.array([
+            ego_v_x,
+            self.smoothed_steering,
+            lateral_error,
+            diff_yaw,
+            y_loc_30,
+            y_loc_60,
+            # Obstacle 1
+            valid_obstacles[0]["x_loc"] if len(valid_obstacles) > 0 else 2.0,
+            valid_obstacles[0]["y_loc"] if len(valid_obstacles) > 0 else 0.0,
+            valid_obstacles[0]["color"] if len(valid_obstacles) > 0 else 0.0,
+            # Obstacle 2
+            valid_obstacles[1]["x_loc"] if len(valid_obstacles) > 1 else 2.0,
+            valid_obstacles[1]["y_loc"] if len(valid_obstacles) > 1 else 0.0,
+            valid_obstacles[1]["color"] if len(valid_obstacles) > 1 else 0.0
         ], dtype=np.float32)
         
-        # Clip to ensure valid observation space boundaries
-        obs_vector = np.clip(obs_vector, self.observation_space.low, self.observation_space.high)
+        # Normalization factors mapping
+        norm_factors = np.array([
+            1.0,                         # ego_v_x
+            1.0 / self.MAX_STEERING,     # smoothed_steering
+            1.0 / 0.5,                   # lateral_error
+            1.0 / (math.pi / 2.0),       # heading_error
+            1.0 / 0.3,                   # y_loc_30
+            1.0 / 0.6,                   # y_loc_60
+            1.0 / 2.0,                   # obs1_x_loc
+            1.0 / 2.0,                   # obs1_y_loc
+            1.0,                         # obs1_color
+            1.0 / 2.0,                   # obs2_x_loc
+            1.0 / 2.0,                   # obs2_y_loc
+            1.0                          # obs2_color
+        ], dtype=np.float32)
+        
+        obs_vector = np.clip(raw_obs * norm_factors, self.observation_space.low, self.observation_space.high)
+        
+        # Store for rendering/visualization
+        self.raw_obs = raw_obs
+        self.obs_vector = obs_vector
+        self.best_closest = best_closest
+        self.p_30 = p_30
+        self.p_60 = p_60
+        self.rx = rx
+        self.ry = ry
+        self.ryaw = ryaw
+        
         return obs_vector
 
     def step(self, action):
@@ -635,6 +658,17 @@ class WebotsWroEnv(gym.Env):
         cy_px = int(self.icp_localizer.window_size - cy * self.icp_localizer.scale)
         cv2.circle(vis_img, (cx_px, cy_px), 6, (0, 255, 255), -1, lineType=cv2.LINE_AA) # Yellow checkpoint indicator
         
+        draw_observation_window(
+            pose=(self.rx, self.ry, self.ryaw),
+            raw_obs=self.raw_obs,
+            obs_vector=self.obs_vector,
+            driving_direction=self.driving_direction,
+            best_closest=self.best_closest,
+            p_30=self.p_30,
+            p_60=self.p_60,
+            window_name="WRO Observation Debug"
+        )
+            
         cv2.imshow("RL Training Environment", vis_img)
         cv2.waitKey(1)
 
