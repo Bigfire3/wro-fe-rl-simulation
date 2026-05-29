@@ -18,8 +18,8 @@ WorldInfo {
   ]
 }
 Viewpoint {
-  orientation 0.31255771933287885 -0.2815717749168795 -0.9072072572767413 4.541277074956849
-  position 0.8523040382370546 -6.478126474538925 5.10618097110986
+  orientation 0.33441021209833843 -0.3304865838488994 -0.8825805503976556 4.603506646045452
+  position 0.1123746675221123 -7.18017585160462 5.88012651978639
 }
 Background {
   skyColor [
@@ -170,6 +170,10 @@ AckermannVehicle {
     InertialUnit {
       translation 0.07 0 0
       name "imu"
+    }
+    Accelerometer {
+      translation 0.07 0 0
+      resolution 0.1
     }
   ]
   boundingObject Pose {
