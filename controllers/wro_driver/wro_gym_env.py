@@ -36,25 +36,26 @@ class WebotsWroEnv(gym.Env):
     def __init__(self):
         super(WebotsWroEnv, self).__init__()
         
-        # Action space: 
-        # Output 1 float: target_steering_offset in [-1.0, 1.0]
-        # (We scale it to [-MAX_STEERING, MAX_STEERING] in step())
+        # Action space:
+        # Output 2 floats:
+        # - Dim 0: target_steering_offset in [-1.0, 1.0] (scaled to [-MAX_STEERING, MAX_STEERING])
+        # - Dim 1: throttle/speed in [0.0, 1.0] (scaled to [0.0, max_motor_velocity])
         self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(1,), dtype=np.float32
+            low=np.array([-1.0, 0.0], dtype=np.float32), high=np.array([1.0, 1.0], dtype=np.float32), shape=(2,), dtype=np.float32
         )
         
-        # Observation space (normalized to [0.0, 1.0] for distances and [-1.0, 1.0] for coordinates/color):
-        # 1. Left wall distance (0 to 1.0)
-        # 2. Right wall distance (0 to 1.0)
-        # 3. Front wall distance (0 to 1.0)
-        # 4. Front-left wall distance (0 to 1.0)
-        # 5. Front-right wall distance (0 to 1.0)
-        # 6. Next obstacle local X (relative forward, -1.0 to 1.0)
-        # 7. Next obstacle local Y (relative side, -1.0 to 1.0)
-        # 8. Next obstacle color / action requirement (-1.0 for green = pass left, 1.0 for red = pass right, 0.0 for none)
+        # Observation space (12 elements, normalized to [-1.0, 1.0] or [0.0, 1.0]):
+        # 0: ego_v_x ([-1.0, 1.0])
+        # 1: last_steering ([-1.0, 1.0])
+        # 2: lateral_error ([-1.0, 1.0])
+        # 3: heading_error ([-1.0, 1.0])
+        # 4: lookahead_curv_30 ([-1.0, 1.0])
+        # 5: lookahead_curv_60 ([-1.0, 1.0])
+        # 6-8: obs1_rel_x, obs1_rel_y, obs1_color ([-1.0, 1.0])
+        # 9-11: obs2_rel_x, obs2_rel_y, obs2_color ([-1.0, 1.0])
         self.observation_space = spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, 0.0, 0.0, -1.0, -1.0, -1.0], dtype=np.float32),
-            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+            low=np.array([-1.0] * 12, dtype=np.float32),
+            high=np.array([1.0] * 12, dtype=np.float32),
             dtype=np.float32
         )
         
@@ -115,6 +116,7 @@ class WebotsWroEnv(gym.Env):
         # Constants
         self.MAX_STEERING = 0.8
         self.TARGET_SPEED = 5.0
+        self.max_motor_velocity = 10.0
         self.WHEELBASE = 0.14
         self.TRACK_FRONT = 0.12
         
@@ -127,6 +129,8 @@ class WebotsWroEnv(gym.Env):
         # State tracking variables
         self.imu_yaw_initial = None
         self.smoothed_steering = 0.0  # Low-pass filter matching Stage 4 Control
+        self.smoothed_speed = 0.0
+        self.stagnation_counter = 0
         self.current_checkpoint_idx = 0
         self.steps_since_last_checkpoint = 0
         self.total_steps = 0
@@ -177,7 +181,7 @@ class WebotsWroEnv(gym.Env):
         # In Webots-Koordinaten umrechnen
         x_webots = start_x_est - 1.5
         y_webots = start_y_est - 1.5
-        z_webots = 0.0300003  # Höhe konstant halten
+        z_webots = 0.030000  # Höhe konstant halten
         angle_webots = yaw_est + math.pi / 2.0
         
         # Position & Rotation in Webots anwenden
@@ -314,6 +318,8 @@ class WebotsWroEnv(gym.Env):
         self.passed_obstacle_ids = set()
         
         self.smoothed_steering = 0.0  # Reset low-pass filter matching Stage 4 Control
+        self.smoothed_speed = 0.0
+        self.stagnation_counter = 0
         self.checkpoints_cleared_this_lap = 0
         
         # Nächstgelegenen Checkpoint ermitteln
@@ -327,6 +333,55 @@ class WebotsWroEnv(gym.Env):
         obs = self._get_obs()
         info = {}
         return obs, info
+
+    def _get_closest_point_on_path(self, rx, ry):
+        if self.driving_direction == "CCW":
+            vertices = [(0.5, 0.5), (2.5, 0.5), (2.5, 2.5), (0.5, 2.5)]
+        else:
+            vertices = [(2.5, 0.5), (0.5, 0.5), (0.5, 2.5), (2.5, 2.5)]
+            
+        p = np.array([rx, ry])
+        best_dist = float('inf')
+        best_closest = None
+        best_tangent = None
+        best_segment_idx = 0
+        best_t = 0.0
+        
+        for i in range(4):
+            a = np.array(vertices[i])
+            b = np.array(vertices[(i + 1) % 4])
+            ap = p - a
+            ab = b - a
+            ab_len_sq = np.dot(ab, ab)
+            if ab_len_sq < 1e-9:
+                t = 0.0
+            else:
+                t = np.dot(ap, ab) / ab_len_sq
+                t = np.clip(t, 0.0, 1.0)
+            closest = a + t * ab
+            dist = np.linalg.norm(p - closest)
+            if dist < best_dist:
+                best_dist = dist
+                best_closest = closest
+                best_segment_idx = i
+                best_t = t
+                ab_norm = np.linalg.norm(ab)
+                best_tangent = ab / ab_norm if ab_norm > 1e-9 else np.array([1.0, 0.0])
+                
+        return best_closest, best_dist, best_tangent, best_segment_idx, best_t
+
+    def _get_point_at_s(self, s):
+        if self.driving_direction == "CCW":
+            vertices = [(0.5, 0.5), (2.5, 0.5), (2.5, 2.5), (0.5, 2.5)]
+        else:
+            vertices = [(2.5, 0.5), (0.5, 0.5), (0.5, 2.5), (2.5, 2.5)]
+            
+        s = s % 8.0
+        k = int(s // 2.0) % 4
+        t = (s % 2.0) / 2.0
+        p_start = np.array(vertices[k])
+        p_end = np.array(vertices[(k + 1) % 4])
+        return p_start + t * (p_end - p_start)
 
     def _get_obs(self):
         # Perception
@@ -349,27 +404,56 @@ class WebotsWroEnv(gym.Env):
             img_bgr = cv2.cvtColor(img_raw, cv2.COLOR_BGRA2BGR)
             self.obstacle_mapper.update_obstacle_colors(img_bgr, [rx, ry, ryaw])
             
-        # Extract features
-        def cap(dist):
-            return min(dist, 1.5)
+        # Get ego velocity using robot node orientation and velocity
+        vel = self.robot_node.getVelocity()
+        if vel is not None:
+            v_g = vel[:3]
+            R = self.robot_node.getOrientation()
+            if R is not None:
+                # Local X axis is [R[0], R[3], R[6]]
+                ego_v_x = v_g[0] * R[0] + v_g[1] * R[3] + v_g[2] * R[6]
+            else:
+                ego_v_x = 0.0
+        else:
+            ego_v_x = 0.0
             
-        right_dist = cap(lidar_data[270])
-        left_dist = cap(lidar_data[90])
-        front_dist = cap(lidar_data[180])
-        front_right_dist = cap(lidar_data[225])
-        front_left_dist = cap(lidar_data[135])
+        # 1. lateral_error
+        best_closest, best_dist, best_tangent, best_segment_idx, best_t = self._get_closest_point_on_path(rx, ry)
+        left_normal = np.array([-best_tangent[1], best_tangent[0]])
+        p = np.array([rx, ry])
+        lateral_error = np.dot(p - best_closest, left_normal)
+        lateral_error_normalized = np.clip(lateral_error / 0.5, -1.0, 1.0)
         
-        # Find next obstacle in front
-        next_obs_x = 2.0
-        next_obs_y = 0.0
-        next_obs_color = 0.0 # 0=gray/none, 1=red, -1=green
+        # 2. heading_error
+        theta_tangent = math.atan2(best_tangent[1], best_tangent[0])
+        diff_yaw = ryaw - theta_tangent
+        diff_yaw = (diff_yaw + math.pi) % (2.0 * math.pi) - math.pi
+        heading_error_normalized = np.clip(diff_yaw / (math.pi / 2.0), -1.0, 1.0)
         
-        # alpha coordinate rotation aligned with camera projection
+        # 3. lookahead points (30cm & 60cm)
+        s_current = best_segment_idx * 2.0 + best_t * 2.0
+        
+        s_30 = (s_current + 0.3) % 8.0
+        p_30 = self._get_point_at_s(s_30)
+        
+        s_60 = (s_current + 0.6) % 8.0
+        p_60 = self._get_point_at_s(s_60)
+        
+        # Transform lookahead points to local coordinates
         alpha = ryaw + math.pi / 2.0
         cos_a = math.cos(alpha)
         sin_a = math.sin(alpha)
         
-        best_dist = float('inf')
+        dx_30 = p_30[0] - rx
+        dy_30 = p_30[1] - ry
+        y_loc_30 = -dx_30 * sin_a + dy_30 * cos_a
+        
+        dx_60 = p_60[0] - rx
+        dy_60 = p_60[1] - ry
+        y_loc_60 = -dx_60 * sin_a + dy_60 * cos_a
+        
+        # 4. Obstacles
+        valid_obstacles = []
         for obs in self.obstacle_mapper.obstacles:
             ox, oy = obs.position
             dx = ox - rx
@@ -377,33 +461,44 @@ class WebotsWroEnv(gym.Env):
             x_loc = dx * cos_a + dy * sin_a
             y_loc = -dx * sin_a + dy * cos_a
             
-            # Check if obstacle is in front of the vehicle
             if x_loc > 0.0:
-                dist = math.hypot(x_loc, y_loc)
-                if dist < best_dist and dist < 2.0:
-                    best_dist = dist
-                    next_obs_x = x_loc
-                    next_obs_y = y_loc
-                    if obs.color == "red":
-                        next_obs_color = 1.0
-                    elif obs.color == "green":
-                        next_obs_color = -1.0
-                    else:
-                        next_obs_color = 0.0
-                        
-        # Scale to normalize the observations:
-        # Lidar distances (indices 0 to 4) are currently capped at 1.5m -> divide by 1.5 to get [0, 1.0]
-        # Obstacle X and Y (indices 5 and 6) are currently in [-2.0, 2.0] -> divide by 2.0 to get [-1.0, 1.0]
-        # Obstacle color (index 7) is already in [-1.0, 1.0]
+                color_val = 1.0 if obs.color == "green" else -1.0 if obs.color == "red" else 0.0
+                valid_obstacles.append({
+                    "x_loc": x_loc,
+                    "y_loc": y_loc,
+                    "color": color_val
+                })
+                
+        # Sort by relative x_loc ascending
+        valid_obstacles.sort(key=lambda item: item["x_loc"])
+        
+        obs_features = []
+        for i in range(2):
+            if i < len(valid_obstacles):
+                o = valid_obstacles[i]
+                rel_x = np.clip(o["x_loc"] / 2.0, -1.0, 1.0)
+                rel_y = np.clip(o["y_loc"] / 2.0, -1.0, 1.0)
+                color = o["color"]
+            else:
+                rel_x = 1.0  # 2.0 / 2.0
+                rel_y = 0.0
+                color = 0.0
+            obs_features.extend([rel_x, rel_y, color])
+            
+        # Build observation vector
         obs_vector = np.array([
-            left_dist / 1.5,
-            right_dist / 1.5,
-            front_dist / 1.5,
-            front_left_dist / 1.5,
-            front_right_dist / 1.5,
-            next_obs_x / 2.0,
-            next_obs_y / 2.0,
-            next_obs_color
+            np.clip(ego_v_x, -1.0, 1.0),
+            np.clip(self.smoothed_steering / self.MAX_STEERING, -1.0, 1.0),
+            lateral_error_normalized,
+            heading_error_normalized,
+            np.clip(y_loc_30 / 0.3, -1.0, 1.0),
+            np.clip(y_loc_60 / 0.6, -1.0, 1.0),
+            obs_features[0],
+            obs_features[1],
+            obs_features[2],
+            obs_features[3],
+            obs_features[4],
+            obs_features[5]
         ], dtype=np.float32)
         
         # Clip to ensure valid observation space boundaries
@@ -414,17 +509,19 @@ class WebotsWroEnv(gym.Env):
         # 1. Apply action (target steering offset)
         target_steering = float(action[0]) * self.MAX_STEERING
         
-        # Apply low-pass filter on steering (matching Stage 4 Control of wro_driver)
-        self.smoothed_steering = self.smoothed_steering + 0.5 * (target_steering - self.smoothed_steering)
+        # Apply low-pass filter on steering
+        self.smoothed_steering = self.smoothed_steering + 0.2 * (target_steering - self.smoothed_steering)
         
-        # Dynamic speed adjustment based on steering angle (matching Stage 4 Control of wro_driver)
-        speed_factor = 1.0 - (abs(self.smoothed_steering) / self.MAX_STEERING) * 0.3
-        speed = self.TARGET_SPEED * max(0.7, speed_factor)
+        # Throttle/Speed is action[1] scaled by self.max_motor_velocity
+        target_speed = float(action[1]) * self.max_motor_velocity
+        
+        # Apply low-pass filter on speed
+        self.smoothed_speed = self.smoothed_speed + 0.2 * (target_speed - self.smoothed_speed)
         
         # Set actuator commands
         self.set_steering_angle(self.smoothed_steering)
-        self.motor_right.setVelocity(speed)
-        self.motor_left.setVelocity(speed)
+        self.motor_right.setVelocity(self.smoothed_speed)
+        self.motor_left.setVelocity(self.smoothed_speed)
         
         # 2. Step simulation physics
         for _ in range(self.frame_skip):
@@ -435,13 +532,35 @@ class WebotsWroEnv(gym.Env):
         obs = self._get_obs()
         
         # 4. Compute reward & check termination
-        reward = 0.0
-        terminated = False
-        truncated = False
-        
         rx = self.icp_localizer.X_real
         ry = self.icp_localizer.Y_real
         ryaw = self.icp_localizer.yaw_real
+        
+        # Calculate lateral error for reward
+        best_closest, best_dist, best_tangent, best_segment_idx, best_t = self._get_closest_point_on_path(rx, ry)
+        left_normal = np.array([-best_tangent[1], best_tangent[0]])
+        p = np.array([rx, ry])
+        lateral_error = np.dot(p - best_closest, left_normal)
+        lateral_error_normalized = np.clip(lateral_error / 0.5, -1.0, 1.0)
+        
+        # Get ego velocity
+        vel = self.robot_node.getVelocity()
+        if vel is not None:
+            v_g = vel[:3]
+            R = self.robot_node.getOrientation()
+            if R is not None:
+                # Local X axis is [R[0], R[3], R[6]]
+                ego_v_x = v_g[0] * R[0] + v_g[1] * R[3] + v_g[2] * R[6]
+            else:
+                ego_v_x = 0.0
+        else:
+            ego_v_x = 0.0
+            
+        # Reward function: ego_v_x * 1.0 - abs(lateral_error_normalized) * 0.1
+        reward = ego_v_x * 1.0 - abs(lateral_error_normalized) * 0.1
+        
+        terminated = False
+        truncated = False
         
         # Check collision via Webots physics contact points (chassis or wheels touching wall/obstacle)
         collision = False
@@ -458,7 +577,7 @@ class WebotsWroEnv(gym.Env):
             print(f"[Gym Env] Error checking contact points: {e}")
                 
         if collision:
-            reward -= 15.0 # High collision penalty
+            reward = -20.0
             terminated = True
             print("[Gym Env] COLLISION detected! Resetting.")
             
@@ -478,26 +597,25 @@ class WebotsWroEnv(gym.Env):
                         crossed_zero = True
                 
                 self.current_checkpoint_idx = idx
-                reward += 3.0 * lookahead  # Reward proportional to checkpoints cleared
-                self.steps_since_last_checkpoint = 0
                 self.checkpoints_cleared_this_lap += lookahead
                 checkpoint_reached = True
                 
                 if crossed_zero:
                     if self.checkpoints_cleared_this_lap >= len(self.checkpoints) - 2:
-                        reward += 10.0
-                        print(f"[Gym Env] LAP completed ({self.driving_direction})! Bonus reward +10.0")
+                        terminated = True
+                        print(f"[Gym Env] LAP completed ({self.driving_direction})! Terminating episode.")
                     self.checkpoints_cleared_this_lap = 0
                 break
         
-        if not checkpoint_reached:
-            self.steps_since_last_checkpoint += 1
+        # Stagnation check: truncate if ego_v_x < 0.01 m/s for 50 steps
+        if ego_v_x < 0.01:
+            self.stagnation_counter += 1
+        else:
+            self.stagnation_counter = 0
             
-        # Stagnation check (Option C): truncate if checkpoint not reached in 12 seconds (120 steps)
-        if self.steps_since_last_checkpoint > 120:
-            reward -= 5.0
+        if self.stagnation_counter >= 50:
             truncated = True
-            print("[Gym Env] TIMEOUT (No progress)! Resetting.")
+            print("[Gym Env] TIMEOUT (Stillstand)! Resetting.")
             
         # Obstacle passing side validation
         alpha = ryaw + math.pi / 2.0
@@ -527,27 +645,22 @@ class WebotsWroEnv(gym.Env):
                 if obstacle.color == "red":
                     # Red obstacle: must pass on the right (obstacle on left side, y_loc > 0)
                     if y_loc > 0:
-                        reward += 5.0
-                        self.steps_since_last_checkpoint = 0  # Reset stagnation steps on correct obstacle pass
-                        print(f"[Gym Env] RED Obstacle passed CORRECTLY! Reward +5.0")
+                        reward += 15.0
+                        print(f"[Gym Env] RED Obstacle passed CORRECTLY! Reward +15.0")
                     else:
-                        reward -= 10.0
+                        reward = -20.0
                         terminated = True
                         print(f"[Gym Env] RED Obstacle passed INCORRECTLY! Resetting.")
                 elif obstacle.color == "green":
                     # Green obstacle: must pass on the left (obstacle on right side, y_loc < 0)
                     if y_loc < 0:
-                        reward += 5.0
-                        self.steps_since_last_checkpoint = 0  # Reset stagnation steps on correct obstacle pass
-                        print(f"[Gym Env] GREEN Obstacle passed CORRECTLY! Reward +5.0")
+                        reward += 15.0
+                        print(f"[Gym Env] GREEN Obstacle passed CORRECTLY! Reward +15.0")
                     else:
-                        reward -= 10.0
+                        reward = -20.0
                         terminated = True
                         print(f"[Gym Env] GREEN Obstacle passed INCORRECTLY! Resetting.")
                         
-        # Small time penalty to encourage speed and efficiency
-        reward -= 0.01
-        
         self.total_steps += 1
         # Hard timeout after 1000 steps (100 seconds)
         if self.total_steps > 1000:
