@@ -1,133 +1,66 @@
-# TODO: Reinforcement Learning Integration (WRO FE Simulation)
+Implementation Plan - Umstellung RL-Architektur (High-Speed & Generalisierung)
+Dieses Dokument beschreibt die geplante Anpassung des Reinheitsgrad-Lernens (RL) für das WRO Future Engineers Roboterprojekt, basierend auf den Anforderungen in 
+TODO.md
+.
 
-Dieses Projekt enthält eine fertige **Gymnasium-Umgebung** zur Verbindung von Webots mit RL-Algorithmen (Stable-Baselines3). Die Verbindung und die physikalischen Resets wurden erfolgreich getestet.
+User Review Required
+IMPORTANT
 
-Die folgenden Schritte beschreiben, wie ein nachfolgender Agent oder Entwickler das Modell trainieren, exportieren und in den Roboter integrieren kann.
+Driver als Supervisor: Der wro_driver.py wird von Robot auf Supervisor umgestellt, um über getVelocity() die Eigengeschwindigkeit ego_v_x des Fahrzeugs exakt zu bestimmen.
+Bestehende Belohnungen entfernt: Gemäß Absprache werden alle alten Checkpoint-Belohnungen sowie der Zeitschritt-Malus (-0.01) entfernt. Der Reward setzt sich ausschließlich aus ego_v_x * 1.0 - abs(lateral_error) * 0.5 zusammen.
+Timeout (Stillstand): Der Stagnations-Check wird rein auf die Eigengeschwindigkeit umgestellt (ego_v_x < 0.01 m/s für 50 konsekutive Schritte).
+Proposed Changes
+Gymnasium Environment
+[MODIFY] 
+wro_gym_env.py
+Action Space:
+Konvertieren in spaces.Box(low=np.array([-1.0, 0.0]), high=np.array([1.0, 1.0]), shape=(2,), dtype=np.float32).
+In step(): Dimension 0 steuert die Lenkung (skaliert mit self.MAX_STEERING = 0.8), Dimension 1 steuert die Geschwindigkeit (skaliert mit self.max_motor_velocity).
+Observation Space:
+Festlegen auf spaces.Box mit 12 Elementen (Low/High Grenzen entsprechend auf [-1.0, 1.0] oder [0.0, 1.0] angepasst).
+Berechnung der Eigengeschwindigkeit ego_v_x via self.robot_node.getVelocity() und Transformation in lokale Koordinaten.
+Definition der quadratischen Mittellinie als 2.0m x 2.0m Quadrat um $(1.5, 1.5)$.
+Berechnung von lateral_error (Projektionsabstand zur Mittellinie, normiert mit /0.5 und Capping auf 1.0).
+Berechnung von heading_error (Differenz zwischen Fahrzeug-Yaw und Linientangente, normiert mit /(pi/2)).
+Berechnung der Lookahead-Punkte in 30 cm und 60 cm entlang der Mittellinie. Transformation in lokale Koordinaten und Normierung der Y-Koordinate durch Division mit 0.3 bzw. 0.6 und anschließendem Capping auf [-1.0, 1.0].
+Sortierung der Hindernisse nach kleinstem positiven rel_x (in Fahrzeugrichtung voraus). Normierung von rel_x und rel_y durch Division mit 2.0. Dummy-Werte falls < 2 Hindernisse vorhanden: rel_x = 2.0, rel_y = 0.0, color = 0.0.
+Belohnungssystem & Resets:
+reward = ego_v_x * 1.0 - abs(lateral_error) * 0.5.
+Harter Bestrafungs-Reward von -20.0 und sofortiger Abbruch (terminated = True) bei Kollision oder Falschumfahrung einer Säule.
+Abbruch nach einer vollständigen Runde (terminated = True).
+Abbruch bei Stillstand (truncated = True), wenn ego_v_x < 0.01 m/s für 50 Schritte.
+Robot Controller & Inference
+[MODIFY] 
+wro_driver.py
+Klasse Robot zu Supervisor ändern.
+Ermittlung des robot_node über robot.getSelf().
+Berechnung des 12-elementigen Observation-Vektors analog zum Gym-Environment (inklusive Eigengeschwindigkeit, Mittellinien-Features und Hindernis-Projektionen).
+Ausführung der ONNX-Inferenz mit dem neuen Eingangsvektor.
+Anwendung der 2-dimensionalen Ausgabe auf Lenk-Servos und Motoren (analog zur Skalierung im Environment).
+Training Script & Hyperparameters
+[MODIFY] 
+train.py
+Hyperparameter des PPO-Algorithmus anpassen:
+learning_rate = 2e-4
+n_steps = 8192
+batch_size = 256
+gamma = 0.98
+ent_coef = 0.01
+policy_kwargs = dict(net_arch=[64, 64])
+Model Export Script
+[MODIFY] 
+export_onnx.py
+Anpassung des Dummy-Inputs im Export-Skript von 8 auf 12 Elemente (dummy_input = torch.randn(1, 12, dtype=torch.float32)).
+Verification Plan
+Automated Tests
+Testen des modifizierten Gym-Environments durch Ausführen von:
+powershell
 
----
+.venv\Scripts\python controllers/wro_driver/test_env.py
+Dabei wird überprüft, ob die Observations korrekt berechnet werden, die Simulation läuft und keine Fehler auftreten.
+Manual Verification
+Trainieren des Modells für 50.000 Schritte, Exportieren ins ONNX-Format und Testen im Driver, um das korrekte Inferenzverhalten zu verifizieren:
+powershell
 
-## Aktueller Stand
-- **Gymnasium Env:** [`controllers/wro_driver/wro_gym_env.py`](file:///c:/Users/fabia/Documents/WRO_FE_SIM/controllers/wro_driver/wro_gym_env.py) – Implementiert Observation Space (8-D), Action Space (1-D), Belohnungen (Checkpoints, richtiges Umfahren) und automatische Webots-Pfad-Erkennung unter Windows.
-- **Verbindungstest:** [`controllers/wro_driver/test_env.py`](file:///c:/Users/fabia/Documents/WRO_FE_SIM/controllers/wro_driver/test_env.py) – Testet die Verbindung und führt den Roboter mit zufälligen Aktionen aus.
-
----
-
-## Wichtiger Hinweis: Normalisierung der Observations (Eingangsdaten)
-Um das Lernen zu beschleunigen und die Stabilität des neuronalen Netzes zu garantieren, sollten alle Werte im Observation-Vektor vor dem Training normalisiert werden (Skalierung auf den Bereich `[0.0, 1.0]` oder `[-1.0, 1.0]`).
-
-Der aktuelle 8-dimensionale Observation-Vektor in `wro_gym_env.py` ist in Metern ausgedrückt. Für das Training empfiehlt sich folgende Normalisierung in `_get_obs()`:
-1. **Lidar-Abstände (Index 0 bis 4):** Teilen durch `1.5` (die maximale Reichweite/Cap), um Werte im Bereich `[0.0, 1.0]` zu erhalten.
-2. **Nächstes Hindernis X/Y (Index 5 und 6):** Teilen durch `2.0` (die maximale Sichtweite/Cap), um Werte im Bereich `[-1.0, 1.0]` zu erhalten.
-3. **Hindernisfarbe (Index 7):** Liegt bereits perfekt im Bereich `[-1.0, 1.0]` (-1.0 für Grün/links, 1.0 für Rot/rechts, 0.0 für kein Hindernis/grau).
-
-*Tipp für den nächsten Agenten:* Passe entweder die Methode `_get_obs()` in `wro_gym_env.py` an, um diese Skalierung direkt durchzuführen (vergiss nicht, die `low`/`high` Grenzen im `observation_space` in `__init__` auf `0.0`/`1.0` bzw. `-1.0`/`1.0` anzupassen!), oder verwende Stable-Baselines3-Wrapper bzw. Gymnasium-Wrapper wie `gym.wrappers.NormalizeObservation` im Trainings-Skript.
-
----
-
-## Nächste Schritte
-
-### 1. Trainings-Skript erstellen (`train.py`)
-Erstelle ein Skript (z. B. `controllers/wro_driver/train.py`), das den Lernprozess steuert.
-```python
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from stable_baselines3 import PPO
-from wro_gym_env import WebotsWroEnv
-
-def main():
-    # Umgebung instanziieren
-    env = WebotsWroEnv()
-    
-    # PPO-Modell erstellen (CPU-Training reicht voellig aus!)
-    model = PPO(
-        "MlpPolicy",
-        env,
-        learning_rate=3e-4,
-        n_steps=2048,
-        batch_size=64,
-        n_epochs=10,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        verbose=1,
-        tensorboard_log="./tb_logs/"
-    )
-    
-    print("Starte Training...")
-    # Ca. 100.000 bis 150.000 Timesteps sollten für den statischen Track reichen
-    model.learn(total_timesteps=150000, tb_log_name="ppo_wro")
-    
-    # Modell speichern
-    model.save("wro_ppo_model")
-    print("Modell erfolgreich unter 'wro_ppo_model.zip' gespeichert!")
-    
-    env.close()
-
-if __name__ == "__main__":
-    main()
-```
-
-### 2. Trainingsfortschritt überwachen (TensorBoard)
-Öffne ein Terminal im Projektverzeichnis und starte Tensorboard:
-```bash
-.venv\Scripts\tensorboard --logdir ./tb_logs/
-```
-Achte auf die Kurven von `rollout/ep_rew_mean` (durchschnittliche Belohnung pro Versuch) und `rollout/ep_len_mean` (Überlebenszeit). Die Belohnung sollte stetig ansteigen.
-
-### 3. Modell nach ONNX exportieren (`export_onnx.py`)
-Erstelle ein Skript, das die gelernte Policy extrahiert und in das ONNX-Format übersetzt, damit die Ausführung auf der Embedded-Hardware ohne PyTorch möglich ist.
-```python
-import torch
-from stable_baselines3 import PPO
-import numpy as np
-
-# PPO-Modell laden
-model = PPO.load("wro_ppo_model")
-
-# Stable-Baselines3 Policy ist ein PyTorch-Modell
-policy = model.policy
-
-# Dummy-Input erzeugen (Entspricht unserem 8-dimensionalen Observation Space)
-dummy_input = torch.randn(1, 8)
-
-# ONNX-Export ausführen
-torch.onnx.export(
-    policy,
-    dummy_input,
-    "wro_model.onnx",
-    opset_version=11,
-    input_names=["input"],
-    output_names=["output"],
-    dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}}
-)
-print("ONNX-Modell erfolgreich als 'wro_model.onnx' exportiert!")
-```
-
-### 4. Integration in den echten Roboter-Controller (`wro_driver.py`)
-Ersetze die Planungs-Phase (Stage 3) im Controller durch die ONNX-Inferenz:
-1. **Laden des Modells beim Start:**
-   ```python
-   import onnxruntime as ort
-   import numpy as np
-   
-   ort_session = ort.InferenceSession("wro_model.onnx")
-   ```
-2. **Inferenz in der Planning-Schleife (10 Hz):**
-   * Baue den gleichen 8-dimensionalen Observation-Vektor wie in `_get_obs()` aus `wro_gym_env.py` auf.
-   * Führe das Modell aus:
-     ```python
-     obs_input = np.array([obs], dtype=np.float32)
-     # Inferenz ausführen
-     ort_inputs = {ort_session.get_inputs()[0].name: obs_input}
-     ort_outs = ort_session.run(None, ort_inputs)
-     
-     # ONNX Stable-Baselines3 Policy gibt 3 Werte zurück (Action, Value, Log_Prob).
-     # Wir benötigen nur den ersten Wert (die Aktion).
-     action = ort_outs[0][0][0] 
-     
-     # Skaliere auf maximalen Lenkwinkel
-     target_steering = action * MAX_STEERING
-     target_speed = TARGET_SPEED
-     ```
+.venv\Scripts\python controllers/wro_driver/train.py --timesteps 50000 --no-render
+.venv\Scripts\python controllers/wro_driver/export_onnx.py
