@@ -3,6 +3,7 @@ from gymnasium import spaces
 import numpy as np
 import math
 import cv2
+from obstacle_randomizer import randomize_obstacles
 
 try:
     from controller import Supervisor
@@ -102,17 +103,6 @@ class WebotsWroEnv(gym.Env):
         self.icp_localizer = TranslationICPLocalizer()
         self.obstacle_mapper = ObstacleMapper()
         
-        # Get obstacle translation fields from DEF names for reset randomization
-        self.red_obstacle_fields = []
-        self.green_obstacle_fields = []
-        for i in range(3):
-            node_red = self.supervisor.getFromDef(f"OBSTACLE_RED_{i}")
-            if node_red:
-                self.red_obstacle_fields.append(node_red.getField("translation"))
-            node_green = self.supervisor.getFromDef(f"OBSTACLE_GREEN_{i}")
-            if node_green:
-                self.green_obstacle_fields.append(node_green.getField("translation"))
-        
         # Constants
         self.MAX_STEERING = 0.8
         self.TARGET_SPEED = 5.0
@@ -189,57 +179,7 @@ class WebotsWroEnv(gym.Env):
         self.rotation_field.setSFRotation([0.0, 0.0, 1.0, angle_webots])
         
         # Hindernisse zurücksetzen und zufällig neu platzieren
-        for field in self.red_obstacle_fields + self.green_obstacle_fields:
-            field.setSFVec3f([0.0, 0.0, 0.05])
-            
-        if self.red_obstacle_fields or self.green_obstacle_fields:
-            available_red = list(self.red_obstacle_fields)
-            available_green = list(self.green_obstacle_fields)
-            
-            # Hindernisse stehen nur im Westen, Norden, Osten (nicht im Süden)
-            sections = ["Westen", "Norden", "Osten"]
-            for section in sections:
-                # Wähle Szenario: 0 (kein Hindernis), 1 (Mitte), 2 (ein Rand), 3 (beide Ränder)
-                scenario = self.np_random.choice([0, 1, 2, 3])
-                
-                slots = []
-                if scenario == 1:
-                    slots = [0.0]
-                elif scenario == 2:
-                    slots = [self.np_random.choice([-0.5, 0.5])]
-                elif scenario == 3:
-                    slots = [-0.5, 0.5]
-                    
-                for s in slots:
-                    # Querverschiebung (Lateral) bestimmen
-                    if section == "Westen":
-                        d = self.np_random.choice([-0.9, -1.1])
-                    else:
-                        d = self.np_random.choice([0.9, 1.1])
-                        
-                    # Globale Koordinaten berechnen
-                    if section == "Westen":
-                        x, y = d, s
-                    elif section == "Norden":
-                        x, y = s, d
-                    elif section == "Osten":
-                        x, y = d, s
-                        
-                    # Farbe basierend auf den verfügbaren physischen Boxen bestimmen
-                    chosen_color = None
-                    if available_red and available_green:
-                        chosen_color = self.np_random.choice(["red", "green"])
-                    elif available_red:
-                        chosen_color = "red"
-                    elif available_green:
-                        chosen_color = "green"
-                        
-                    if chosen_color == "red":
-                        field = available_red.pop()
-                        field.setSFVec3f([x, y, 0.05])
-                    elif chosen_color == "green":
-                        field = available_green.pop()
-                        field.setSFVec3f([x, y, 0.05])
+        randomize_obstacles(self.supervisor, train=True, seed=self.np_random)
         
         # Reset physics
         self.supervisor.simulationResetPhysics()

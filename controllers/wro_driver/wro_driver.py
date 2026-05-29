@@ -38,10 +38,11 @@ import warnings
 import numpy as np
 import cv2
 # pyrefly: ignore [missing-import]
-from controller import Robot
+from controller import Supervisor
 from opencv_localizer import OpenCVLocalizer
 from trans_icp_localizer import TranslationICPLocalizer
 from obstacle_mapper import ObstacleMapper
+from obstacle_randomizer import randomize_obstacles
 
 # --- configuration ---
 TIME_STEP = 32            # ms
@@ -150,7 +151,8 @@ def ackermann_angles(target_angle):
         return -inner, -outer
 
 # --- initialise robot ---
-robot = Robot()
+robot = Supervisor()
+robot_node = robot.getSelf()
 
 # Camera
 camera = robot.getDevice("camera")
@@ -185,6 +187,9 @@ def set_steering_angle(target_angle):
 localizer = OpenCVLocalizer()
 icp_localizer = TranslationICPLocalizer()
 obstacle_mapper = ObstacleMapper()
+
+# Randomly place obstacles on startup
+randomize_obstacles(robot)
 
 # --- state variables ---
 robot_x = 1.5
@@ -358,8 +363,18 @@ def run_planning(pose, sensor_data):
             # --- Reinforcement Learning Path Planning ---
             rx, ry, ryaw = pose
             
-            # Get ego velocity (approximated from wheel speed and radius under no-slip assumption)
-            ego_v_x = smoothed_speed * WHEEL_RADIUS
+            # Get ego velocity directly from Webots physics
+            vel = robot_node.getVelocity()
+            if vel is not None:
+                v_g = vel[:3]
+                R = robot_node.getOrientation()
+                if R is not None:
+                    # Local X axis is [R[0], R[3], R[6]]
+                    ego_v_x = round(v_g[0] * R[0] + v_g[1] * R[3] + v_g[2] * R[6], 2)
+                else:
+                    ego_v_x = 0.0
+            else:
+                ego_v_x = 0.0
                 
             # 1. lateral_error
             best_closest, best_dist, best_tangent, best_segment_idx, best_t = get_closest_point_on_path(rx, ry, driving_direction)
