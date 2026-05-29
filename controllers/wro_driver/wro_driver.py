@@ -83,6 +83,55 @@ if USE_RL:
 def clamp(value, min_val, max_val):
     return max(min_val, min(max_val, value))
 
+def get_closest_point_on_path(rx, ry, direction):
+    if direction == "CCW":
+        vertices = [(0.5, 0.5), (2.5, 0.5), (2.5, 2.5), (0.5, 2.5)]
+    else:
+        vertices = [(2.5, 0.5), (0.5, 0.5), (0.5, 2.5), (2.5, 2.5)]
+        
+    p = np.array([rx, ry])
+    best_dist = float('inf')
+    best_closest = None
+    best_tangent = None
+    best_segment_idx = 0
+    best_t = 0.0
+    
+    for i in range(4):
+        a = np.array(vertices[i])
+        b = np.array(vertices[(i + 1) % 4])
+        ap = p - a
+        ab = b - a
+        ab_len_sq = np.dot(ab, ab)
+        if ab_len_sq < 1e-9:
+            t = 0.0
+        else:
+            t = np.dot(ap, ab) / ab_len_sq
+            t = np.clip(t, 0.0, 1.0)
+        closest = a + t * ab
+        dist = np.linalg.norm(p - closest)
+        if dist < best_dist:
+            best_dist = dist
+            best_closest = closest
+            best_segment_idx = i
+            best_t = t
+            ab_norm = np.linalg.norm(ab)
+            best_tangent = ab / ab_norm if ab_norm > 1e-9 else np.array([1.0, 0.0])
+            
+    return best_closest, best_dist, best_tangent, best_segment_idx, best_t
+
+def get_point_at_s(s, direction):
+    if direction == "CCW":
+        vertices = [(0.5, 0.5), (2.5, 0.5), (2.5, 2.5), (0.5, 2.5)]
+    else:
+        vertices = [(2.5, 0.5), (0.5, 0.5), (0.5, 2.5), (2.5, 2.5)]
+        
+    s = s % 8.0
+    k = int(s // 2.0) % 4
+    t = (s % 2.0) / 2.0
+    p_start = np.array(vertices[k])
+    p_end = np.array(vertices[(k + 1) % 4])
+    return p_start + t * (p_end - p_start)
+
 # --- Ackermann helper ---
 def ackermann_angles(target_angle):
     if abs(target_angle) < 1e-6:
@@ -148,6 +197,7 @@ driving_direction = None
 collected_scans = []
 prev_error = 0.0
 smoothed_steering = 0.0
+smoothed_speed = 0.0
 imu_yaw_initial = None  # Erster IMU-Wert zum Nullen (wie echte IMU)
 
 # Generate reference image for calibration
@@ -308,25 +358,46 @@ def run_planning(pose, sensor_data):
             # --- Reinforcement Learning Path Planning ---
             rx, ry, ryaw = pose
             
-            def cap(dist):
-                return min(dist, 1.5)
+            # Get ego velocity (approximated from wheel speed and radius under no-slip assumption)
+            ego_v_x = smoothed_speed * WHEEL_RADIUS
                 
-            right_dist = cap(lidar_data[270])
-            left_dist = cap(lidar_data[90])
-            front_dist = cap(lidar_data[180])
-            front_right_dist = cap(lidar_data[225])
-            front_left_dist = cap(lidar_data[135])
+            # 1. lateral_error
+            best_closest, best_dist, best_tangent, best_segment_idx, best_t = get_closest_point_on_path(rx, ry, driving_direction)
+            left_normal = np.array([-best_tangent[1], best_tangent[0]])
+            p = np.array([rx, ry])
+            lateral_error = np.dot(p - best_closest, left_normal)
+            lateral_error_normalized = np.clip(lateral_error / 0.5, -1.0, 1.0)
             
-            # Find next obstacle in front
-            next_obs_x = 2.0
-            next_obs_y = 0.0
-            next_obs_color = 0.0 # 0=gray/none, 1=red, -1=green
+            # 2. heading_error
+            theta_tangent = math.atan2(best_tangent[1], best_tangent[0])
+            diff_yaw = ryaw - theta_tangent
+            diff_yaw = (diff_yaw + math.pi) % (2.0 * math.pi) - math.pi
+            heading_error_normalized = np.clip(diff_yaw / (math.pi / 2.0), -1.0, 1.0)
             
+            # 3. lookahead points (30cm & 60cm)
+            s_current = best_segment_idx * 2.0 + best_t * 2.0
+            
+            s_30 = (s_current + 0.3) % 8.0
+            p_30 = get_point_at_s(s_30, driving_direction)
+            
+            s_60 = (s_current + 0.6) % 8.0
+            p_60 = get_point_at_s(s_60, driving_direction)
+            
+            # Transform lookahead points to local coordinates
             alpha = ryaw + math.pi / 2.0
             cos_a = math.cos(alpha)
             sin_a = math.sin(alpha)
             
-            best_dist = float('inf')
+            dx_30 = p_30[0] - rx
+            dy_30 = p_30[1] - ry
+            y_loc_30 = -dx_30 * sin_a + dy_30 * cos_a
+            
+            dx_60 = p_60[0] - rx
+            dy_60 = p_60[1] - ry
+            y_loc_60 = -dx_60 * sin_a + dy_60 * cos_a
+            
+            # 4. Obstacles
+            valid_obstacles = []
             for obs in obstacle_mapper.obstacles:
                 ox, oy = obs.position
                 dx = ox - rx
@@ -334,36 +405,48 @@ def run_planning(pose, sensor_data):
                 x_loc = dx * cos_a + dy * sin_a
                 y_loc = -dx * sin_a + dy * cos_a
                 
-                # Check if obstacle is in front of the vehicle
                 if x_loc > 0.0:
-                    dist = math.hypot(x_loc, y_loc)
-                    if dist < best_dist and dist < 2.0:
-                        best_dist = dist
-                        next_obs_x = x_loc
-                        next_obs_y = y_loc
-                        if obs.color == "red":
-                            next_obs_color = 1.0
-                        elif obs.color == "green":
-                            next_obs_color = -1.0
-                        else:
-                            next_obs_color = 0.0
-                            
-            # Build normalized observation vector (matching wro_gym_env.py)
+                    color_val = 1.0 if obs.color == "green" else -1.0 if obs.color == "red" else 0.0
+                    valid_obstacles.append({
+                        "x_loc": x_loc,
+                        "y_loc": y_loc,
+                        "color": color_val
+                    })
+                    
+            # Sort by relative x_loc ascending
+            valid_obstacles.sort(key=lambda item: item["x_loc"])
+            
+            obs_features = []
+            for i in range(2):
+                if i < len(valid_obstacles):
+                    o = valid_obstacles[i]
+                    rel_x = np.clip(o["x_loc"] / 2.0, -1.0, 1.0)
+                    rel_y = np.clip(o["y_loc"] / 2.0, -1.0, 1.0)
+                    color = o["color"]
+                else:
+                    rel_x = 1.0  # 2.0 / 2.0
+                    rel_y = 0.0
+                    color = 0.0
+                obs_features.extend([rel_x, rel_y, color])
+                
+            # Build observation vector
             obs_vector = np.array([
-                left_dist / 1.5,
-                right_dist / 1.5,
-                front_dist / 1.5,
-                front_left_dist / 1.5,
-                front_right_dist / 1.5,
-                next_obs_x / 2.0,
-                next_obs_y / 2.0,
-                next_obs_color
+                np.clip(ego_v_x, -1.0, 1.0),
+                np.clip(smoothed_steering / MAX_STEERING, -1.0, 1.0),
+                lateral_error_normalized,
+                heading_error_normalized,
+                np.clip(y_loc_30 / 0.3, -1.0, 1.0),
+                np.clip(y_loc_60 / 0.6, -1.0, 1.0),
+                obs_features[0],
+                obs_features[1],
+                obs_features[2],
+                obs_features[3],
+                obs_features[4],
+                obs_features[5]
             ], dtype=np.float32)
             
-            # Clip bounds matching wro_gym_env.py
-            low_bounds = np.array([0.0, 0.0, 0.0, 0.0, 0.0, -1.0, -1.0, -1.0], dtype=np.float32)
-            high_bounds = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32)
-            obs_vector = np.clip(obs_vector, low_bounds, high_bounds)
+            # Clip bounds matching spaces.Box
+            obs_vector = np.clip(obs_vector, -1.0, 1.0)
             
             # Run ONNX inference
             try:
@@ -372,11 +455,13 @@ def run_planning(pose, sensor_data):
                 ort_outs = ort_session.run(None, ort_inputs)
                 
                 # ONNX policy outputs (action, value, log_prob)
-                action = ort_outs[0][0][0]
-                action = clamp(action, -1.0, 1.0)
+                action = ort_outs[0][0]
+                act_steer = clamp(action[0], -1.0, 1.0)
+                act_speed = clamp(action[1], 0.0, 1.0)
                 
-                target_steering = action * MAX_STEERING
-                target_speed = TARGET_SPEED
+                target_steering = act_steer * MAX_STEERING
+                # Scale speed by max motor velocity (10.0 rad/s)
+                target_speed = act_speed * 10.0
             except Exception as e:
                 print(f"[RL Error] Inference failed: {e}. Falling back to Rules-based.")
                 USE_RL = False
@@ -441,14 +526,19 @@ def run_control(target_speed, target_steering):
     Rechnet Soll-Vorgaben in reale Aktuatorsignale um (Ackermann, PID, Filter).
     Enthält KEINE übergeordnete Zustandslogik.
     """
-    global smoothed_steering
+    global smoothed_steering, smoothed_speed, USE_RL
     
-    # 1. Tiefpassfilter auf den Lenkwinkel anwenden
-    smoothed_steering = smoothed_steering + 0.5 * (target_steering - smoothed_steering)
-    
-    # 2. Dynamische Geschwindigkeitsanpassung basierend auf dem Lenkwinkel
-    speed_factor = 1.0 - (abs(smoothed_steering) / MAX_STEERING) * 0.3
-    speed = target_speed * max(0.7, speed_factor)
+    if USE_RL:
+        # 1. Tiefpassfilter auf den Lenkwinkel und die Geschwindigkeit anwenden (RL)
+        smoothed_steering = smoothed_steering + 0.2 * (target_steering - smoothed_steering)
+        smoothed_speed = smoothed_speed + 0.2 * (target_speed - smoothed_speed)
+        speed = smoothed_speed
+    else:
+        # 1. Tiefpassfilter auf den Lenkwinkel anwenden (Rules-based)
+        smoothed_steering = smoothed_steering + 0.5 * (target_steering - smoothed_steering)
+        # 2. Dynamische Geschwindigkeitsanpassung basierend auf dem Lenkwinkel (nur Rules-based)
+        speed_factor = 1.0 - (abs(smoothed_steering) / MAX_STEERING) * 0.3
+        speed = target_speed * max(0.7, speed_factor)
     
     # Motoren ansteuern
     motor_right.setVelocity(speed)
