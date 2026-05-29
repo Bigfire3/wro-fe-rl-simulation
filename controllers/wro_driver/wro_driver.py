@@ -43,6 +43,7 @@ from opencv_localizer import OpenCVLocalizer
 from trans_icp_localizer import TranslationICPLocalizer
 from obstacle_mapper import ObstacleMapper
 from obstacle_randomizer import randomize_obstacles
+from obs_visualizer import draw_observation_window
 
 # --- configuration ---
 TIME_STEP = 32            # ms
@@ -204,6 +205,7 @@ prev_error = 0.0
 smoothed_steering = 0.0
 smoothed_speed = 0.0
 imu_yaw_initial = None  # Erster IMU-Wert zum Nullen (wie echte IMU)
+global_obs_data = (None, None, None, None, None)
 
 # Generate reference image for calibration
 ref_img = localizer.create_arena_reference_image()
@@ -332,6 +334,114 @@ def run_estimation(localizer, icp_localizer, obstacle_mapper, sensor_data):
             
     return robot_x, robot_y, robot_yaw
 
+def compute_observation(pose):
+    global smoothed_steering, driving_direction, obstacle_mapper, MAX_STEERING, robot_node
+    rx, ry, ryaw = pose
+    
+    # Get ego velocity directly from Webots physics
+    vel = robot_node.getVelocity()
+    if vel is not None:
+        v_g = vel[:3]
+        R = robot_node.getOrientation()
+        if R is not None:
+            # Local X axis is [R[0], R[3], R[6]]
+            ego_v_x = round(v_g[0] * R[0] + v_g[1] * R[3] + v_g[2] * R[6], 2)
+        else:
+            ego_v_x = 0.0
+    else:
+        ego_v_x = 0.0
+        
+    # 1. lateral_error
+    best_closest, best_dist, best_tangent, best_segment_idx, best_t = get_closest_point_on_path(rx, ry, driving_direction)
+    left_normal = np.array([-best_tangent[1], best_tangent[0]])
+    p = np.array([rx, ry])
+    lateral_error = np.dot(p - best_closest, left_normal)
+    
+    # 2. heading_error
+    theta_tangent = math.atan2(best_tangent[1], best_tangent[0])
+    diff_yaw = ryaw - theta_tangent
+    diff_yaw = (diff_yaw + math.pi) % (2.0 * math.pi) - math.pi
+    
+    # 3. lookahead points (30cm & 60cm)
+    s_current = best_segment_idx * 2.0 + best_t * 2.0
+    
+    s_30 = (s_current + 0.3) % 8.0
+    p_30 = get_point_at_s(s_30, driving_direction)
+    
+    s_60 = (s_current + 0.6) % 8.0
+    p_60 = get_point_at_s(s_60, driving_direction)
+    
+    # Transform lookahead points to local coordinates
+    alpha = ryaw + math.pi / 2.0
+    cos_a = math.cos(alpha)
+    sin_a = math.sin(alpha)
+    
+    dx_30 = p_30[0] - rx
+    dy_30 = p_30[1] - ry
+    y_loc_30 = -dx_30 * sin_a + dy_30 * cos_a
+    
+    dx_60 = p_60[0] - rx
+    dy_60 = p_60[1] - ry
+    y_loc_60 = -dx_60 * sin_a + dy_60 * cos_a
+    
+    # 4. Obstacles
+    valid_obstacles = []
+    for obs in obstacle_mapper.obstacles:
+        ox, oy = obs.position
+        dx = ox - rx
+        dy = oy - ry
+        x_loc = dx * cos_a + dy * sin_a
+        y_loc = -dx * sin_a + dy * cos_a
+        
+        if x_loc > 0.0:
+            color_val = 1.0 if obs.color == "green" else -1.0 if obs.color == "red" else 0.0
+            valid_obstacles.append({
+                "x_loc": x_loc,
+                "y_loc": y_loc,
+                "color": color_val
+            })
+            
+    # Sort by relative x_loc ascending
+    valid_obstacles.sort(key=lambda item: item["x_loc"])
+    
+    # Build raw observation vector
+    raw_obs = np.array([
+        ego_v_x,
+        smoothed_steering,
+        lateral_error,
+        diff_yaw,
+        y_loc_30,
+        y_loc_60,
+        # Obstacle 1
+        valid_obstacles[0]["x_loc"] if len(valid_obstacles) > 0 else 2.0,
+        valid_obstacles[0]["y_loc"] if len(valid_obstacles) > 0 else 0.0,
+        valid_obstacles[0]["color"] if len(valid_obstacles) > 0 else 0.0,
+        # Obstacle 2
+        valid_obstacles[1]["x_loc"] if len(valid_obstacles) > 1 else 2.0,
+        valid_obstacles[1]["y_loc"] if len(valid_obstacles) > 1 else 0.0,
+        valid_obstacles[1]["color"] if len(valid_obstacles) > 1 else 0.0
+    ], dtype=np.float32)
+    
+    # Normalization factors mapping
+    norm_factors = np.array([
+        1.0,                    # ego_v_x
+        1.0 / MAX_STEERING,     # smoothed_steering
+        1.0 / 0.5,              # lateral_error
+        1.0 / (math.pi / 2.0),  # heading_error
+        1.0 / 0.3,              # y_loc_30
+        1.0 / 0.6,              # y_loc_60
+        1.0 / 2.0,              # obs1_x_loc
+        1.0 / 2.0,              # obs1_y_loc
+        1.0,                    # obs1_color
+        1.0 / 2.0,              # obs2_x_loc
+        1.0 / 2.0,              # obs2_y_loc
+        1.0                     # obs2_color
+    ], dtype=np.float32)
+    
+    obs_vector = np.clip(raw_obs * norm_factors, -1.0, 1.0)
+    
+    return raw_obs, obs_vector, best_closest, p_30, p_60
+
 # --- STAGE 3: PLANNING (State Machine) ---
 def run_planning(pose, sensor_data):
     """
@@ -361,107 +471,9 @@ def run_planning(pose, sensor_data):
             
         if USE_RL and ort_session is not None:
             # --- Reinforcement Learning Path Planning ---
-            rx, ry, ryaw = pose
-            
-            # Get ego velocity directly from Webots physics
-            vel = robot_node.getVelocity()
-            if vel is not None:
-                v_g = vel[:3]
-                R = robot_node.getOrientation()
-                if R is not None:
-                    # Local X axis is [R[0], R[3], R[6]]
-                    ego_v_x = round(v_g[0] * R[0] + v_g[1] * R[3] + v_g[2] * R[6], 2)
-                else:
-                    ego_v_x = 0.0
-            else:
-                ego_v_x = 0.0
-                
-            # 1. lateral_error
-            best_closest, best_dist, best_tangent, best_segment_idx, best_t = get_closest_point_on_path(rx, ry, driving_direction)
-            left_normal = np.array([-best_tangent[1], best_tangent[0]])
-            p = np.array([rx, ry])
-            lateral_error = np.dot(p - best_closest, left_normal)
-            lateral_error_normalized = np.clip(lateral_error / 0.5, -1.0, 1.0)
-            
-            # 2. heading_error
-            theta_tangent = math.atan2(best_tangent[1], best_tangent[0])
-            diff_yaw = ryaw - theta_tangent
-            diff_yaw = (diff_yaw + math.pi) % (2.0 * math.pi) - math.pi
-            heading_error_normalized = np.clip(diff_yaw / (math.pi / 2.0), -1.0, 1.0)
-            
-            # 3. lookahead points (30cm & 60cm)
-            s_current = best_segment_idx * 2.0 + best_t * 2.0
-            
-            s_30 = (s_current + 0.3) % 8.0
-            p_30 = get_point_at_s(s_30, driving_direction)
-            
-            s_60 = (s_current + 0.6) % 8.0
-            p_60 = get_point_at_s(s_60, driving_direction)
-            
-            # Transform lookahead points to local coordinates
-            alpha = ryaw + math.pi / 2.0
-            cos_a = math.cos(alpha)
-            sin_a = math.sin(alpha)
-            
-            dx_30 = p_30[0] - rx
-            dy_30 = p_30[1] - ry
-            y_loc_30 = -dx_30 * sin_a + dy_30 * cos_a
-            
-            dx_60 = p_60[0] - rx
-            dy_60 = p_60[1] - ry
-            y_loc_60 = -dx_60 * sin_a + dy_60 * cos_a
-            
-            # 4. Obstacles
-            valid_obstacles = []
-            for obs in obstacle_mapper.obstacles:
-                ox, oy = obs.position
-                dx = ox - rx
-                dy = oy - ry
-                x_loc = dx * cos_a + dy * sin_a
-                y_loc = -dx * sin_a + dy * cos_a
-                
-                if x_loc > 0.0:
-                    color_val = 1.0 if obs.color == "green" else -1.0 if obs.color == "red" else 0.0
-                    valid_obstacles.append({
-                        "x_loc": x_loc,
-                        "y_loc": y_loc,
-                        "color": color_val
-                    })
-                    
-            # Sort by relative x_loc ascending
-            valid_obstacles.sort(key=lambda item: item["x_loc"])
-            
-            obs_features = []
-            for i in range(2):
-                if i < len(valid_obstacles):
-                    o = valid_obstacles[i]
-                    rel_x = np.clip(o["x_loc"] / 2.0, -1.0, 1.0)
-                    rel_y = np.clip(o["y_loc"] / 2.0, -1.0, 1.0)
-                    color = o["color"]
-                else:
-                    rel_x = 1.0  # 2.0 / 2.0
-                    rel_y = 0.0
-                    color = 0.0
-                obs_features.extend([rel_x, rel_y, color])
-                
-            # Build observation vector
-            obs_vector = np.array([
-                np.clip(ego_v_x, -1.0, 1.0),
-                np.clip(smoothed_steering / MAX_STEERING, -1.0, 1.0),
-                lateral_error_normalized,
-                heading_error_normalized,
-                np.clip(y_loc_30 / 0.3, -1.0, 1.0),
-                np.clip(y_loc_60 / 0.6, -1.0, 1.0),
-                obs_features[0],
-                obs_features[1],
-                obs_features[2],
-                obs_features[3],
-                obs_features[4],
-                obs_features[5]
-            ], dtype=np.float32)
-            
-            # Clip bounds matching spaces.Box
-            obs_vector = np.clip(obs_vector, -1.0, 1.0)
+            raw_obs, obs_vector, best_closest, p_30, p_60 = global_obs_data
+            if obs_vector is None:
+                raw_obs, obs_vector, best_closest, p_30, p_60 = compute_observation(pose)
             
             # Run ONNX inference
             try:
@@ -580,6 +592,11 @@ while robot.step(TIME_STEP) != -1:
     # --- 2. STAGE 2: ESTIMATION ---
     robot_pose = run_estimation(localizer, icp_localizer, obstacle_mapper, sensor_data)
     
+    if initial_pose_found:
+        global_obs_data = compute_observation(robot_pose)
+    else:
+        global_obs_data = (None, None, None, None, None)
+    
     # --- 3. STAGE 3: PLANNING ---
     target_speed, target_steering = run_planning(robot_pose, sensor_data)
     
@@ -612,6 +629,19 @@ while robot.step(TIME_STEP) != -1:
                     cv2.imshow("WRO Camera Debug", cam_debug)
                 except Exception:
                     pass
+                    
+            if global_obs_data[0] is not None:
+                raw_obs, obs_vector, best_closest, p_30, p_60 = global_obs_data
+                draw_observation_window(
+                    pose=robot_pose,
+                    raw_obs=raw_obs,
+                    obs_vector=obs_vector,
+                    driving_direction=driving_direction,
+                    best_closest=best_closest,
+                    p_30=p_30,
+                    p_60=p_60,
+                    window_name="WRO Observation Debug"
+                )
         try:
             cv2.imshow("WRO Localization", vis_img)
         except Exception:
