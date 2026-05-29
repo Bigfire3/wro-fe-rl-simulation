@@ -37,7 +37,7 @@ class TranslationICPLocalizer:
         
         # Hintergrundbild (Spielfeld.png) laden
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        img_path = os.path.join(script_dir, "..", "..", "worlds", "textures", "Spielfeld.png")
+        img_path = os.path.join(script_dir, "..", "..", "..", "worlds", "textures", "Spielfeld.png")
         
         if os.path.exists(img_path):
             img_bgr = cv2.imread(img_path)

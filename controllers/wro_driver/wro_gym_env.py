@@ -3,14 +3,22 @@ from gymnasium import spaces
 import numpy as np
 import math
 import cv2
-from obstacle_randomizer import randomize_obstacles
-from obs_visualizer import draw_observation_window
+import os
+import sys
+
+# Ensure wro_core is importable
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.append(script_dir)
+
+from wro_core import config, perception, estimation, planning, control
+from wro_core.obs_visualizer import draw_observation_window
+from wro_core.obstacle_randomizer import randomize_obstacles
+from wro_core import geometry
 
 try:
     from controller import Supervisor
 except ModuleNotFoundError:
-    import sys
-    import os
     # Try to find Webots installation to add its Python controller libraries to path
     webots_paths = [
         os.environ.get("WEBOTS_HOME", ""),
@@ -46,15 +54,7 @@ class WebotsWroEnv(gym.Env):
             low=np.array([-1.0, 0.0], dtype=np.float32), high=np.array([1.0, 1.0], dtype=np.float32), shape=(2,), dtype=np.float32
         )
         
-        # Observation space (12 elements, normalized to [-1.0, 1.0] or [0.0, 1.0]):
-        # 0: ego_v_x ([-1.0, 1.0])
-        # 1: last_steering ([-1.0, 1.0])
-        # 2: lateral_error ([-1.0, 1.0])
-        # 3: heading_error ([-1.0, 1.0])
-        # 4: lookahead_curv_30 ([-1.0, 1.0])
-        # 5: lookahead_curv_60 ([-1.0, 1.0])
-        # 6-8: obs1_rel_x, obs1_rel_y, obs1_color ([-1.0, 1.0])
-        # 9-11: obs2_rel_x, obs2_rel_y, obs2_color ([-1.0, 1.0])
+        # Observation space (12 elements, normalized to [-1.0, 1.0]):
         self.observation_space = spaces.Box(
             low=np.array([-1.0] * 12, dtype=np.float32),
             high=np.array([1.0] * 12, dtype=np.float32),
@@ -91,52 +91,24 @@ class WebotsWroEnv(gym.Env):
         self.translation_field = self.robot_node.getField("translation")
         self.rotation_field = self.robot_node.getField("rotation")
         
-        # Initial pose values for reset (matching wro_driver start coordinates)
-        self.initial_translation = [-0.221441, -1.01067, 0.0300003]
-        self.initial_rotation = [0, 0, 1, 0] # Face East (+X)
-        
-        # State estimation helper modules
-        from opencv_localizer import OpenCVLocalizer
-        from trans_icp_localizer import TranslationICPLocalizer
-        from obstacle_mapper import ObstacleMapper
-        
-        self.localizer = OpenCVLocalizer()
-        self.icp_localizer = TranslationICPLocalizer()
-        self.obstacle_mapper = ObstacleMapper()
-        
-        # Constants
-        self.MAX_STEERING = 0.8
-        self.TARGET_SPEED = 5.0
-        self.max_motor_velocity = 10.0
-        self.WHEELBASE = 0.14
-        self.TRACK_FRONT = 0.12
+        # State estimation and control helper modules
+        self.estimator = estimation.StateEstimator()
+        self.car_controller = control.Controller()
         
         # Timing
-        self.control_freq = 10 # Hz
-        self.frame_skip = int(1000 / (self.control_freq * self.timestep))
+        self.frame_skip = int(1000 / (config.CONTROL_FREQ * self.timestep))
         if self.frame_skip < 1:
             self.frame_skip = 1
             
         # State tracking variables
         self.imu_yaw_initial = None
-        self.smoothed_steering = 0.0  # Low-pass filter matching Stage 4 Control
-        self.smoothed_speed = 0.0
         self.stagnation_counter = 0
         self.current_checkpoint_idx = 0
-        self.steps_since_last_checkpoint = 0
         self.total_steps = 0
         self.passed_obstacle_ids = set()
-        self.driving_direction = "CCW"
-        
-        # Centralized checkpoints (16 points around 2.0x2.0m loop centered at 1.5,1.5)
-        self.checkpoints = [
-            (1.5, 0.5), (2.0, 0.5), (2.5, 0.5), (2.5, 1.0),
-            (2.5, 1.5), (2.5, 2.0), (2.5, 2.5), (2.0, 2.5), (1.5, 2.5),
-            (1.0, 2.5), (0.5, 2.5), (0.5, 2.0), (0.5, 1.5), (0.5, 1.0),
-            (0.5, 0.5), (1.0, 0.5)
-        ]
         self.checkpoints_cleared_this_lap = 0
         
+        # Variables stored for visualization/rendering
         self.raw_obs = np.zeros(12, dtype=np.float32)
         self.obs_vector = np.zeros(12, dtype=np.float32)
         self.best_closest = None
@@ -145,24 +117,6 @@ class WebotsWroEnv(gym.Env):
         self.rx = 1.5
         self.ry = 0.5
         self.ryaw = 0.0
-
-    def ackermann_angles(self, target_angle):
-        if abs(target_angle) < 1e-6:
-            return 0.0, 0.0
-        R = self.WHEELBASE / math.tan(abs(target_angle))
-        inner = math.atan(self.WHEELBASE / (R - self.TRACK_FRONT / 2.0))
-        outer = math.atan(self.WHEELBASE / (R + self.TRACK_FRONT / 2.0))
-        if target_angle > 0: 
-            return outer, inner
-        else: 
-            return -inner, -outer
-
-    def set_steering_angle(self, target_angle):
-        left, right = self.ackermann_angles(target_angle)
-        left = max(-self.MAX_STEERING, min(self.MAX_STEERING, left))
-        right = max(-self.MAX_STEERING, min(self.MAX_STEERING, right))
-        self.steer_left.setPosition(left)
-        self.steer_right.setPosition(right)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -173,58 +127,53 @@ class WebotsWroEnv(gym.Env):
         self.steer_left.setPosition(0.0)
         self.steer_right.setPosition(0.0)
         
-        # Zufällige Pose in Schätzer-Koordinaten wählen (1.2, 0.2) - (1.8, 0.8)
+        # Random start pose
         start_x_est = self.np_random.uniform(1.2, 1.8)
         start_y_est = self.np_random.uniform(0.2, 0.8)
         yaw_est = self.np_random.uniform(-np.pi, np.pi)
         
-        # In Webots-Koordinaten umrechnen
+        # Convert to Webots coordinates
         x_webots = start_x_est - 1.5
         y_webots = start_y_est - 1.5
-        z_webots = 0.030000  # Höhe konstant halten
+        z_webots = 0.030000
         angle_webots = yaw_est + math.pi / 2.0
         
-        # Position & Rotation in Webots anwenden
+        # Teleport robot
         self.translation_field.setSFVec3f([x_webots, y_webots, z_webots])
         self.rotation_field.setSFRotation([0.0, 0.0, 1.0, angle_webots])
         
-        # Hindernisse zurücksetzen und zufällig neu platzieren
+        # Reset obstacles
         randomize_obstacles(self.supervisor, train=True, seed=self.np_random)
         
         # Reset physics
         self.supervisor.simulationResetPhysics()
         
-        # Step simulation to apply physics reset
+        # Step simulation to apply reset
         for _ in range(5):
             self.supervisor.step(self.timestep)
             
-        # Reset localizers and state variables
+        # Reset state estimators & controllers
         self.imu_yaw_initial = None
+        self.car_controller.reset()
+        self.estimator.reset()
         
-        # Collect 10 scans of Lidar data to calibrate starting position (similar to wro_driver.py)
+        # Calibrate starting position
         collected_scans = []
         import warnings
         
-        # Step simulation to accumulate scans while robot remains stationary
         for _ in range(10):
             if self.supervisor.step(self.timestep) == -1:
                 break
-            
-            # Read IMU to set/keep baseline
-            rpy = self.imu.getRollPitchYaw()
-            imu_yaw_raw = rpy[2] if rpy else 0.0
-            if self.imu_yaw_initial is None:
-                self.imu_yaw_initial = imu_yaw_raw
+            sensor_data, self.imu_yaw_initial = perception.read_sensors(
+                self.lidar, self.imu, self.camera, self.imu_yaw_initial
+            )
+            lidar_ranges = sensor_data["lidar_ranges"]
+            if len(lidar_ranges) > 0:
+                collected_scans.append(lidar_ranges)
                 
-            lidar_data = self.lidar.getRangeImage()
-            if lidar_data is not None and len(lidar_data) > 0:
-                collected_scans.append(lidar_data)
-                
-        # Perform initial pose calibration using OpenCV template matching
         calibrated = False
         if len(collected_scans) >= 10:
             scans_arr = np.array(collected_scans)
-            # Filter invalid values
             invalid_mask = (scans_arr <= 0.01) | (scans_arr >= 2.0) | np.isinf(scans_arr) | np.isnan(scans_arr)
             scans_arr[invalid_mask] = np.nan
             
@@ -234,344 +183,152 @@ class WebotsWroEnv(gym.Env):
             avg_ranges = np.nan_to_num(avg_ranges, nan=0.0)
             
             try:
-                n_rays = len(avg_ranges)
-                angle_inc = -2.0 * math.pi / n_rays if n_rays > 0 else 0.0
-                angle_offset = math.pi / 2
-                
-                x_init, y_init, yaw_init, direction, debug_img = self.localizer.calibrate_initial_pose(
-                    avg_ranges=avg_ranges,
-                    angle_offset=angle_offset,
-                    angle_inc=angle_inc
-                )
-                #print(f"[Gym Env Calibration] Best candidate found at: x={x_init:.3f}m, y={y_init:.3f}m, yaw={yaw_init:.3f} rad ({math.degrees(yaw_init):.1f}°)")
+                x_init, y_init, yaw_init, direction, debug_img = self.estimator.calibrate_from_scans(avg_ranges)
                 print(f"[Gym Env Calibration] Resolved driving direction: {direction}")
-                
-                self.localizer.set_initial_pose(x_init, y_init, yaw_init)
-                self.icp_localizer.set_initial_pose(x_init, y_init, yaw_init)
-                self.driving_direction = direction
+                self.estimator.set_calibrated_pose(x_init, y_init, yaw_init, direction)
                 calibrated = True
             except Exception as e:
                 print(f"[Gym Env Calibration] Error during calibration: {e}")
                 
         if not calibrated:
-            # Fallback auf die tatsächlich generierte Pose
-            self.localizer.set_initial_pose(start_x_est, start_y_est, yaw_est)
-            self.icp_localizer.set_initial_pose(start_x_est, start_y_est, yaw_est)
-            # Richtung aus yaw_est ableiten
+            # Fallback based on generated yaw
             sin_yaw = math.sin(yaw_est)
-            if sin_yaw < 0 or (abs(sin_yaw) < 1e-5 and yaw_est < 0):
-                self.driving_direction = "CCW"
-            else:
-                self.driving_direction = "CW"
-        
-        self.obstacle_mapper.obstacles = []
+            direction = "CCW" if (sin_yaw < 0 or (abs(sin_yaw) < 1e-5 and yaw_est < 0)) else "CW"
+            self.estimator.set_calibrated_pose(start_x_est, start_y_est, yaw_est, direction)
+            
         self.passed_obstacle_ids = set()
-        
-        self.smoothed_steering = 0.0  # Reset low-pass filter matching Stage 4 Control
-        self.smoothed_speed = 0.0
         self.stagnation_counter = 0
         self.checkpoints_cleared_this_lap = 0
         
-        # Nächstgelegenen Checkpoint ermitteln
-        dists = [math.hypot(start_x_est - cp[0], start_y_est - cp[1]) for cp in self.checkpoints]
+        # Nearest checkpoint index
+        dists = [math.hypot(start_x_est - cp[0], start_y_est - cp[1]) for cp in config.CHECKPOINTS]
         self.current_checkpoint_idx = int(np.argmin(dists))
         
-        self.steps_since_last_checkpoint = 0
         self.total_steps = 0
         
-        # Get observation
         obs = self._get_obs()
-        info = {}
-        return obs, info
-
-    def _get_closest_point_on_path(self, rx, ry):
-        if self.driving_direction == "CCW":
-            vertices = [(0.5, 0.5), (2.5, 0.5), (2.5, 2.5), (0.5, 2.5)]
-        else:
-            vertices = [(2.5, 0.5), (0.5, 0.5), (0.5, 2.5), (2.5, 2.5)]
-            
-        p = np.array([rx, ry])
-        best_dist = float('inf')
-        best_closest = None
-        best_tangent = None
-        best_segment_idx = 0
-        best_t = 0.0
-        
-        for i in range(4):
-            a = np.array(vertices[i])
-            b = np.array(vertices[(i + 1) % 4])
-            ap = p - a
-            ab = b - a
-            ab_len_sq = np.dot(ab, ab)
-            if ab_len_sq < 1e-9:
-                t = 0.0
-            else:
-                t = np.dot(ap, ab) / ab_len_sq
-                t = np.clip(t, 0.0, 1.0)
-            closest = a + t * ab
-            dist = np.linalg.norm(p - closest)
-            if dist < best_dist:
-                best_dist = dist
-                best_closest = closest
-                best_segment_idx = i
-                best_t = t
-                ab_norm = np.linalg.norm(ab)
-                best_tangent = ab / ab_norm if ab_norm > 1e-9 else np.array([1.0, 0.0])
-                
-        return best_closest, best_dist, best_tangent, best_segment_idx, best_t
-
-    def _get_point_at_s(self, s):
-        if self.driving_direction == "CCW":
-            vertices = [(0.5, 0.5), (2.5, 0.5), (2.5, 2.5), (0.5, 2.5)]
-        else:
-            vertices = [(2.5, 0.5), (0.5, 0.5), (0.5, 2.5), (2.5, 2.5)]
-            
-        s = s % 8.0
-        k = int(s // 2.0) % 4
-        t = (s % 2.0) / 2.0
-        p_start = np.array(vertices[k])
-        p_end = np.array(vertices[(k + 1) % 4])
-        return p_start + t * (p_end - p_start)
+        return obs, {}
 
     def _get_obs(self):
-        # Perception
-        lidar_data = self.lidar.getRangeImage()
-        if lidar_data is None or len(lidar_data) == 0:
-            lidar_data = [1.5] * 360
-            
-        rpy = self.imu.getRollPitchYaw()
-        imu_yaw = rpy[2] - self.imu_yaw_initial if (rpy and self.imu_yaw_initial is not None) else 0.0
+        # 1. Perception
+        sensor_data, self.imu_yaw_initial = perception.read_sensors(
+            self.lidar, self.imu, self.camera, self.imu_yaw_initial
+        )
         
-        # Estimation
-        rx, ry, ryaw, outliers = self.icp_localizer.update(lidar_data, imu_yaw)
-        self.obstacle_mapper.update([rx, ry, ryaw], outliers)
+        # 2. Estimation
+        rx, ry, ryaw = self.estimator.update(sensor_data)
         
-        img_buffer = self.camera.getImage()
-        if img_buffer:
-            w = self.camera.getWidth()
-            h = self.camera.getHeight()
-            img_raw = np.frombuffer(img_buffer, dtype=np.uint8).reshape((h, w, 4))
-            img_bgr = cv2.cvtColor(img_raw, cv2.COLOR_BGRA2BGR)
-            self.obstacle_mapper.update_obstacle_colors(img_bgr, [rx, ry, ryaw])
-            
-        # Get ego velocity using robot node orientation and velocity
+        # Get velocity
         vel = self.robot_node.getVelocity()
         if vel is not None:
             v_g = vel[:3]
             R = self.robot_node.getOrientation()
-            if R is not None:
-                # Local X axis is [R[0], R[3], R[6]]
-                ego_v_x = v_g[0] * R[0] + v_g[1] * R[3] + v_g[2] * R[6]
-            else:
-                ego_v_x = 0.0
+            ego_v_x = float(v_g[0] * R[0] + v_g[1] * R[3] + v_g[2] * R[6]) if R is not None else 0.0
         else:
             ego_v_x = 0.0
             
-        # 1. lateral_error
-        best_closest, best_dist, best_tangent, best_segment_idx, best_t = self._get_closest_point_on_path(rx, ry)
-        left_normal = np.array([-best_tangent[1], best_tangent[0]])
-        p = np.array([rx, ry])
-        lateral_error = np.dot(p - best_closest, left_normal)
+        # 3. Planning (observation computation)
+        self.raw_obs, self.obs_vector, self.best_closest, self.p_30, self.p_60 = planning.compute_observation_vector(
+            pose=(rx, ry, ryaw),
+            obstacles=self.estimator.obstacle_mapper.obstacles,
+            driving_direction=self.estimator.driving_direction,
+            smoothed_steering=self.car_controller.smoothed_steering,
+            ego_v_x=ego_v_x
+        )
+        self.rx, self.ry, self.ryaw = rx, ry, ryaw
         
-        # 2. heading_error
-        theta_tangent = math.atan2(best_tangent[1], best_tangent[0])
-        diff_yaw = ryaw - theta_tangent
-        diff_yaw = (diff_yaw + math.pi) % (2.0 * math.pi) - math.pi
-        
-        # 3. lookahead points (30cm & 60cm)
-        s_current = best_segment_idx * 2.0 + best_t * 2.0
-        
-        s_30 = (s_current + 0.3) % 8.0
-        p_30 = self._get_point_at_s(s_30)
-        
-        s_60 = (s_current + 0.6) % 8.0
-        p_60 = self._get_point_at_s(s_60)
-        
-        # Transform lookahead points to local coordinates
-        alpha = ryaw + math.pi / 2.0
-        cos_a = math.cos(alpha)
-        sin_a = math.sin(alpha)
-        
-        dx_30 = p_30[0] - rx
-        dy_30 = p_30[1] - ry
-        y_loc_30 = -dx_30 * sin_a + dy_30 * cos_a
-        
-        dx_60 = p_60[0] - rx
-        dy_60 = p_60[1] - ry
-        y_loc_60 = -dx_60 * sin_a + dy_60 * cos_a
-        
-        # 4. Obstacles
-        valid_obstacles = []
-        for obs in self.obstacle_mapper.obstacles:
-            ox, oy = obs.position
-            dx = ox - rx
-            dy = oy - ry
-            x_loc = dx * cos_a + dy * sin_a
-            y_loc = -dx * sin_a + dy * cos_a
-            
-            if x_loc > 0.0 and abs(y_loc) <= 1.0:
-                color_val = 1.0 if obs.color == "green" else -1.0 if obs.color == "red" else 0.0
-                valid_obstacles.append({
-                    "x_loc": x_loc,
-                    "y_loc": y_loc,
-                    "color": color_val,
-                    "dist": math.hypot(x_loc, y_loc)
-                })
-                
-        # Sort by total Euclidean distance ascending
-        valid_obstacles.sort(key=lambda item: item["dist"])
-        
-        # Build raw observation vector
-        raw_obs = np.array([
-            ego_v_x,
-            self.smoothed_steering,
-            lateral_error,
-            diff_yaw,
-            y_loc_30,
-            y_loc_60,
-            # Obstacle 1
-            valid_obstacles[0]["x_loc"] if len(valid_obstacles) > 0 else 2.0,
-            valid_obstacles[0]["y_loc"] if len(valid_obstacles) > 0 else 0.0,
-            valid_obstacles[0]["color"] if len(valid_obstacles) > 0 else 0.0,
-            # Obstacle 2
-            valid_obstacles[1]["x_loc"] if len(valid_obstacles) > 1 else 2.0,
-            valid_obstacles[1]["y_loc"] if len(valid_obstacles) > 1 else 0.0,
-            valid_obstacles[1]["color"] if len(valid_obstacles) > 1 else 0.0
-        ], dtype=np.float32)
-        
-        # Normalization factors mapping
-        norm_factors = np.array([
-            1.0,                         # ego_v_x
-            1.0 / self.MAX_STEERING,     # smoothed_steering
-            1.0 / 0.5,                   # lateral_error
-            1.0 / (math.pi / 2.0),       # heading_error
-            1.0 / 0.3,                   # y_loc_30
-            1.0 / 0.6,                   # y_loc_60
-            1.0 / 2.0,                   # obs1_x_loc
-            1.0 / 2.0,                   # obs1_y_loc
-            1.0,                         # obs1_color
-            1.0 / 2.0,                   # obs2_x_loc
-            1.0 / 2.0,                   # obs2_y_loc
-            1.0                          # obs2_color
-        ], dtype=np.float32)
-        
-        obs_vector = np.clip(raw_obs * norm_factors, self.observation_space.low, self.observation_space.high)
-        
-        # Store for rendering/visualization
-        self.raw_obs = raw_obs
-        self.obs_vector = obs_vector
-        self.best_closest = best_closest
-        self.p_30 = p_30
-        self.p_60 = p_60
-        self.rx = rx
-        self.ry = ry
-        self.ryaw = ryaw
-        
-        return obs_vector
+        return self.obs_vector
 
     def step(self, action):
-        # 1. Apply action (target steering offset)
-        target_steering = float(action[0]) * self.MAX_STEERING
+        # 1. Apply action
+        target_steering = float(action[0]) * config.MAX_STEERING
+        target_speed = float(action[1]) * config.MAX_MOTOR_VELOCITY
         
-        # Apply low-pass filter on steering
-        self.smoothed_steering = self.smoothed_steering + 0.2 * (target_steering - self.smoothed_steering)
+        # 4. Control
+        self.car_controller.apply(
+            target_speed=target_speed,
+            target_steering=target_steering,
+            motor_left=self.motor_left,
+            motor_right=self.motor_right,
+            steer_left=self.steer_left,
+            steer_right=self.steer_right,
+            use_rl=True
+        )
         
-        # Throttle/Speed is action[1] scaled by self.max_motor_velocity
-        target_speed = float(action[1]) * self.max_motor_velocity
-        
-        # Apply low-pass filter on speed
-        self.smoothed_speed = self.smoothed_speed + 0.2 * (target_speed - self.smoothed_speed)
-        
-        # Set actuator commands
-        self.set_steering_angle(self.smoothed_steering)
-        self.motor_right.setVelocity(self.smoothed_speed)
-        self.motor_left.setVelocity(self.smoothed_speed)
-        
-        # 2. Step simulation physics
+        # Step simulation physics
         for _ in range(self.frame_skip):
             if self.supervisor.step(self.timestep) == -1:
                 break
                 
-        # 3. Get new observation
+        # 3. Get next observation
         obs = self._get_obs()
         
         # 4. Compute reward & check termination
-        rx = self.icp_localizer.X_real
-        ry = self.icp_localizer.Y_real
-        ryaw = self.icp_localizer.yaw_real
+        rx, ry, ryaw = self.rx, self.ry, self.ryaw
         
         # Calculate lateral error for reward
-        best_closest, best_dist, best_tangent, best_segment_idx, best_t = self._get_closest_point_on_path(rx, ry)
+        best_closest, best_dist, best_tangent, best_segment_idx, best_t = geometry.get_closest_point_on_path(
+            rx, ry, self.estimator.driving_direction
+        )
         left_normal = np.array([-best_tangent[1], best_tangent[0]])
         p = np.array([rx, ry])
         lateral_error = np.dot(p - best_closest, left_normal)
         lateral_error_normalized = np.clip(lateral_error / 0.5, -1.0, 1.0)
         
-        # Get ego velocity
+        # Velocity
         vel = self.robot_node.getVelocity()
         if vel is not None:
             v_g = vel[:3]
             R = self.robot_node.getOrientation()
-            if R is not None:
-                # Local X axis is [R[0], R[3], R[6]]
-                ego_v_x = v_g[0] * R[0] + v_g[1] * R[3] + v_g[2] * R[6]
-            else:
-                ego_v_x = 0.0
+            ego_v_x = float(v_g[0] * R[0] + v_g[1] * R[3] + v_g[2] * R[6]) if R is not None else 0.0
         else:
             ego_v_x = 0.0
             
-        # Reward function: ego_v_x * 1.0 - abs(lateral_error_normalized) * 0.1
         reward = ego_v_x * 1.0 - abs(lateral_error_normalized) * 0.1
         
         terminated = False
         truncated = False
         
-        # Check collision via Webots physics contact points (chassis or wheels touching wall/obstacle)
+        # Collision detection via contact points
         collision = False
         try:
             contact_points = self.robot_node.getContactPoints(includeDescendants=True)
             for cp in contact_points:
-                # cp.getPoint() returns [x, y, z] in global coordinates.
-                # Floor contacts are at z ≈ 0.0m.
-                # Wall or obstacle contacts are at z > 0.01m (1cm) since the chassis and wheels contact them higher.
                 if cp.getPoint()[2] > 0.01:
                     collision = True
                     break
         except Exception as e:
             print(f"[Gym Env] Error checking contact points: {e}")
-                
+            
         if collision:
             reward = -20.0
             terminated = True
             print("[Gym Env] COLLISION detected! Resetting.")
             
         # Checkpoint Progress tracking
-        checkpoint_reached = False
-        step_dir = 1 if self.driving_direction == "CCW" else -1
+        step_dir = 1 if self.estimator.driving_direction == "CCW" else -1
         for lookahead in [1, 2]:
-            idx = (self.current_checkpoint_idx + lookahead * step_dir) % len(self.checkpoints)
-            target_cp = self.checkpoints[idx]
+            idx = (self.current_checkpoint_idx + lookahead * step_dir) % len(config.CHECKPOINTS)
+            target_cp = config.CHECKPOINTS[idx]
             dist_to_cp = math.hypot(rx - target_cp[0], ry - target_cp[1])
-            if dist_to_cp < 0.55:  # Increased from 0.35 to 0.55 to be robust against wall-hugging/swerving
-                # Check if we crossed/landed on index 0 (lap completion)
+            if dist_to_cp < 0.55:
                 crossed_zero = False
                 for i in range(1, lookahead + 1):
-                    check_idx = (self.current_checkpoint_idx + i * step_dir) % len(self.checkpoints)
+                    check_idx = (self.current_checkpoint_idx + i * step_dir) % len(config.CHECKPOINTS)
                     if check_idx == 0:
                         crossed_zero = True
-                
+                        
                 self.current_checkpoint_idx = idx
                 self.checkpoints_cleared_this_lap += lookahead
-                checkpoint_reached = True
                 
                 if crossed_zero:
-                    if self.checkpoints_cleared_this_lap >= len(self.checkpoints) - 2:
+                    if self.checkpoints_cleared_this_lap >= len(config.CHECKPOINTS) - 2:
                         terminated = True
-                        print(f"[Gym Env] LAP completed ({self.driving_direction})! Terminating episode.")
+                        print(f"[Gym Env] LAP completed ({self.estimator.driving_direction})! Terminating episode.")
                     self.checkpoints_cleared_this_lap = 0
                 break
-        
-        # Stagnation check: truncate if ego_v_x < 0.01 m/s for 50 steps
+                
+        # Stagnation check
         if ego_v_x < 0.01:
             self.stagnation_counter += 1
         else:
@@ -586,11 +343,10 @@ class WebotsWroEnv(gym.Env):
         cos_a = math.cos(alpha)
         sin_a = math.sin(alpha)
         
-        for obstacle in self.obstacle_mapper.obstacles:
+        for obstacle in self.estimator.obstacle_mapper.obstacles:
             if obstacle.color not in ["red", "green"]:
                 continue
                 
-            # Create unique ID for obstacle based on position
             obs_key = (round(obstacle.position[0], 1), round(obstacle.position[1], 1))
             if obs_key in self.passed_obstacle_ids:
                 continue
@@ -601,7 +357,6 @@ class WebotsWroEnv(gym.Env):
             x_loc = dx * cos_a + dy * sin_a
             y_loc = -dx * sin_a + dy * cos_a
             
-            # Check if robot has just passed it (x_loc goes behind, within lateral range)
             if -0.3 < x_loc <= 0.0 and math.hypot(x_loc, y_loc) < 0.8:
                 self.passed_obstacle_ids.add(obs_key)
                 
@@ -626,7 +381,6 @@ class WebotsWroEnv(gym.Env):
                         print(f"[Gym Env] GREEN Obstacle passed INCORRECTLY! Resetting.")
                         
         self.total_steps += 1
-        # Hard timeout after 1000 steps (100 seconds)
         if self.total_steps > 1000:
             truncated = True
             
@@ -641,29 +395,24 @@ class WebotsWroEnv(gym.Env):
         return obs, reward, terminated, truncated, info
 
     def render(self, mode="human"):
-        rx = self.icp_localizer.X_real
-        ry = self.icp_localizer.Y_real
-        ryaw = self.icp_localizer.yaw_real
-        
-        # Get background ICP render
-        vis_img = self.icp_localizer.render()
-        
-        # Render obstacles
-        vis_img = self.obstacle_mapper.render(vis_img, [rx, ry, ryaw], self.icp_localizer.scale, self.icp_localizer.window_size)
+        vis_img = self.estimator.icp_localizer.render()
+        vis_img = self.estimator.obstacle_mapper.render(
+            vis_img, [self.rx, self.ry, self.ryaw], self.estimator.icp_localizer.scale, self.estimator.icp_localizer.window_size
+        )
         
         # Draw next checkpoint
-        step_dir = 1 if self.driving_direction == "CCW" else -1
-        next_idx = (self.current_checkpoint_idx + step_dir) % len(self.checkpoints)
-        cx, cy = self.checkpoints[next_idx]
-        cx_px = int(cx * self.icp_localizer.scale)
-        cy_px = int(self.icp_localizer.window_size - cy * self.icp_localizer.scale)
-        cv2.circle(vis_img, (cx_px, cy_px), 6, (0, 255, 255), -1, lineType=cv2.LINE_AA) # Yellow checkpoint indicator
+        step_dir = 1 if self.estimator.driving_direction == "CCW" else -1
+        next_idx = (self.current_checkpoint_idx + step_dir) % len(config.CHECKPOINTS)
+        cx, cy = config.CHECKPOINTS[next_idx]
+        cx_px = int(cx * self.estimator.icp_localizer.scale)
+        cy_px = int(self.estimator.icp_localizer.window_size - cy * self.estimator.icp_localizer.scale)
+        cv2.circle(vis_img, (cx_px, cy_px), 6, (0, 255, 255), -1, lineType=cv2.LINE_AA)
         
         draw_observation_window(
             pose=(self.rx, self.ry, self.ryaw),
             raw_obs=self.raw_obs,
             obs_vector=self.obs_vector,
-            driving_direction=self.driving_direction,
+            driving_direction=self.estimator.driving_direction,
             best_closest=self.best_closest,
             p_30=self.p_30,
             p_60=self.p_60,
