@@ -93,6 +93,11 @@ class ObsVisualizer:
                 color = (0, 255, 0) if o1_col > 0.1 else (0, 0, 255) if o1_col < -0.1 else (128, 128, 128)
                 cv2.rectangle(img, (pt1_x, pt1_y), (pt2_x, pt2_y), color, -1)
                 
+                # Draw label "1" above the obstacle square
+                ox_px = int(ox * self.scale)
+                cv2.putText(img, "1", (ox_px - 4, pt1_y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 2, lineType=cv2.LINE_AA)
+                cv2.putText(img, "1", (ox_px - 4, pt1_y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, lineType=cv2.LINE_AA)
+                
             # Obstacle 2
             o2_x_loc, o2_y_loc, o2_col = raw_obs[9], raw_obs[10], raw_obs[11]
             if not (abs(o2_x_loc - 2.0) < 1e-4 and abs(o2_y_loc) < 1e-4 and abs(o2_col) < 1e-4):
@@ -104,6 +109,11 @@ class ObsVisualizer:
                 pt2_y = int(self.window_size - (oy - 0.025) * self.scale)
                 color = (0, 255, 0) if o2_col > 0.1 else (0, 0, 255) if o2_col < -0.1 else (128, 128, 128)
                 cv2.rectangle(img, (pt1_x, pt1_y), (pt2_x, pt2_y), color, -1)
+                
+                # Draw label "2" above the obstacle square
+                ox_px = int(ox * self.scale)
+                cv2.putText(img, "2", (ox_px - 4, pt1_y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 2, lineType=cv2.LINE_AA)
+                cv2.putText(img, "2", (ox_px - 4, pt1_y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, lineType=cv2.LINE_AA)
             
         # 5. Draw Robot position & heading arrow
         cv2.circle(img, (rx_px, ry_px), 8, (255, 50, 50), -1, lineType=cv2.LINE_AA) # Blue robot dot

@@ -409,16 +409,17 @@ class WebotsWroEnv(gym.Env):
             x_loc = dx * cos_a + dy * sin_a
             y_loc = -dx * sin_a + dy * cos_a
             
-            if x_loc > 0.0:
+            if x_loc > 0.0 and abs(y_loc) <= 1.0:
                 color_val = 1.0 if obs.color == "green" else -1.0 if obs.color == "red" else 0.0
                 valid_obstacles.append({
                     "x_loc": x_loc,
                     "y_loc": y_loc,
-                    "color": color_val
+                    "color": color_val,
+                    "dist": math.hypot(x_loc, y_loc)
                 })
                 
-        # Sort by relative x_loc ascending
-        valid_obstacles.sort(key=lambda item: item["x_loc"])
+        # Sort by total Euclidean distance ascending
+        valid_obstacles.sort(key=lambda item: item["dist"])
         
         # Build raw observation vector
         raw_obs = np.array([

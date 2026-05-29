@@ -1,9 +1,6 @@
 """
 WRO Future Engineers – Webots Controller
 =========================================
-Wall-follower using Lidar and IMU with manual Ackermann calculation.
-Includes real-time SLAM occupancy grid mapping with live browser viewer.
-Refactored to follow a strict 4-Stage Software Pipeline:
 - Stage 1: Perception
 - Stage 2: Estimation
 - Stage 3: Planning (Hierarchical State Machine)
@@ -190,7 +187,7 @@ icp_localizer = TranslationICPLocalizer()
 obstacle_mapper = ObstacleMapper()
 
 # Randomly place obstacles on startup
-randomize_obstacles(robot)
+#randomize_obstacles(robot)
 
 # --- state variables ---
 robot_x = 1.5
@@ -393,16 +390,17 @@ def compute_observation(pose):
         x_loc = dx * cos_a + dy * sin_a
         y_loc = -dx * sin_a + dy * cos_a
         
-        if x_loc > 0.0:
+        if x_loc > 0.0 and abs(y_loc) <= 1.0:
             color_val = 1.0 if obs.color == "green" else -1.0 if obs.color == "red" else 0.0
             valid_obstacles.append({
                 "x_loc": x_loc,
                 "y_loc": y_loc,
-                "color": color_val
+                "color": color_val,
+                "dist": math.hypot(x_loc, y_loc)
             })
             
-    # Sort by relative x_loc ascending
-    valid_obstacles.sort(key=lambda item: item["x_loc"])
+    # Sort by total Euclidean distance ascending
+    valid_obstacles.sort(key=lambda item: item["dist"])
     
     # Build raw observation vector
     raw_obs = np.array([
