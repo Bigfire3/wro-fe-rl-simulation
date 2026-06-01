@@ -89,7 +89,6 @@ car_controller = control.Controller()
 
 # --- State variables ---
 imu_yaw_initial = None
-collected_scans = []
 global_obs_data = (None, None, None, None, None)
 
 # Reset obstacles
@@ -128,40 +127,28 @@ while robot.step(config.TIME_STEP) != -1:
     # --- 2. STAGE 2: ESTIMATION ---
     if not estimator.initial_pose_found:
         lidar_ranges = sensor_data["lidar_ranges"]
-        if len(lidar_ranges) > 0:
-            collected_scans.append(lidar_ranges)
-            if len(collected_scans) >= 10:
-                scans_arr = np.array(collected_scans)
-                # Filter invalid values
-                invalid_mask = (scans_arr <= 0.01) | (scans_arr >= 2.0) | np.isinf(scans_arr) | np.isnan(scans_arr)
-                scans_arr[invalid_mask] = np.nan
-                
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", category=RuntimeWarning)
-                    avg_ranges = np.nanmean(scans_arr, axis=0)
-                avg_ranges = np.nan_to_num(avg_ranges, nan=0.0)
-                
+        try:
+            res = estimator.add_calibration_scan(lidar_ranges)
+            if res is not None:
+                x_init, y_init, yaw_init, direction, debug_img = res
+                cv2.imshow("Calibration Result", debug_img)
+                print(f"[Calibration] Best candidate found at: x={x_init:.3f}m, y={y_init:.3f}m, yaw={yaw_init:.3f} rad")
+                print(f"[Calibration] Resolved driving direction: {direction}")
+                cv2.waitKey(1)
                 try:
-                    x_init, y_init, yaw_init, direction, debug_img = estimator.calibrate_from_scans(avg_ranges)
-                    cv2.imshow("Calibration Result", debug_img)
-                    print(f"[Calibration] Best candidate found at: x={x_init:.3f}m, y={y_init:.3f}m, yaw={yaw_init:.3f} rad")
-                    print(f"[Calibration] Resolved driving direction: {direction}")
-                    cv2.waitKey(1)
-                    
-                    estimator.set_calibrated_pose(x_init, y_init, yaw_init, direction)
-                except Exception as e:
-                    print(f"[Calibration] Error during calibration: {e}")
-                    # Fallback
-                    estimator.set_calibrated_pose(1.5, 0.5, 0.0, "CCW")
-                finally:
-                    try:
-                        cv2.destroyWindow("Calibration Result")
-                    except Exception:
-                        pass
-        # If not calibrated yet, command zero speed
-        motor_right.setVelocity(0.0)
-        motor_left.setVelocity(0.0)
-        continue
+                    cv2.destroyWindow("Calibration Result")
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[Calibration] Error during calibration: {e}")
+            # Fallback
+            estimator.set_calibrated_pose(1.5, 0.5, 0.0, "CCW")
+            
+        if not estimator.initial_pose_found:
+            # If not calibrated yet, command zero speed
+            motor_right.setVelocity(0.0)
+            motor_left.setVelocity(0.0)
+            continue
 
     # Calibration is completed, proceed with standard control loop
     robot_pose = estimator.update(sensor_data)

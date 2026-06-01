@@ -41,6 +41,35 @@ class StateEstimator:
         )
         return x_init, y_init, yaw_init, direction, debug_img
         
+    def add_calibration_scan(self, lidar_ranges):
+        """
+        Adds a LiDAR scan for initial calibration.
+        Accumulates scans, filters invalid values, and performs template matching calibration
+        when 10 scans are collected.
+        Returns (x_init, y_init, yaw_init, direction, debug_img) if calibration is successful,
+        otherwise returns None.
+        """
+        if self.initial_pose_found:
+            return None
+            
+        if len(lidar_ranges) > 0:
+            self.collected_scans.append(lidar_ranges)
+            if len(self.collected_scans) >= 10:
+                scans_arr = np.array(self.collected_scans)
+                # Filter invalid values
+                invalid_mask = (scans_arr <= 0.01) | (scans_arr >= 2.0) | np.isinf(scans_arr) | np.isnan(scans_arr)
+                scans_arr[invalid_mask] = np.nan
+                
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=RuntimeWarning)
+                    avg_ranges = np.nanmean(scans_arr, axis=0)
+                avg_ranges = np.nan_to_num(avg_ranges, nan=0.0)
+                
+                x_init, y_init, yaw_init, direction, debug_img = self.calibrate_from_scans(avg_ranges)
+                self.set_calibrated_pose(x_init, y_init, yaw_init, direction)
+                return x_init, y_init, yaw_init, direction, debug_img
+        return None
+        
     def set_calibrated_pose(self, x, y, yaw, direction):
         self.localizer.set_initial_pose(x, y, yaw)
         self.icp_localizer.set_initial_pose(x, y, yaw)
