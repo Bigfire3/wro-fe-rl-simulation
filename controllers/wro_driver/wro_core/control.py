@@ -35,14 +35,12 @@ class Controller:
             speed (float): The actual velocity set on the motors.
             steering (float): The actual smoothed target steering angle.
         """
+        self.smoothed_steering = target_steering
+        self.smoothed_speed = target_speed
+
         if use_rl:
-            # Low-pass filter for RL
-            self.smoothed_steering = self.smoothed_steering + 0.2 * (target_steering - self.smoothed_steering)
-            self.smoothed_speed = self.smoothed_speed + 0.2 * (target_speed - self.smoothed_speed)
-            speed = self.smoothed_speed
+            speed = target_speed
         else:
-            # Low-pass filter for rules-based
-            self.smoothed_steering = self.smoothed_steering + 0.5 * (target_steering - self.smoothed_steering)
             # Speed scaling based on steering angle
             speed_factor = 1.0 - (abs(self.smoothed_steering) / config.MAX_STEERING) * 0.3
             speed = target_speed * max(0.7, speed_factor)
