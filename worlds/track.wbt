@@ -18,8 +18,8 @@ WorldInfo {
   ]
 }
 Viewpoint {
-  orientation 0.3456757892696566 -0.3454212570536338 -0.8724634112031789 4.602143422869052
-  position 0.16362925775215942 -5.4492348484759665 4.861408943809936
+  orientation 0.2698391878420586 -0.2620747084530052 -0.9265547257955197 4.641182712718807
+  position 0.4028178035778984 -5.067290318789296 3.076368794382824
 }
 Background {
   skyColor [
@@ -45,7 +45,7 @@ RectangleArena {
   }
 }
 DEF OBSTACLE_RED_0 SolidBox {
-  translation -1.1 0.5 0.05
+  translation 0.22 0.12 0.05
   name "Obstacle_Red"
   size 0.045 0.045 0.1
   appearance PBRAppearance {
@@ -55,7 +55,7 @@ DEF OBSTACLE_RED_0 SolidBox {
   }
 }
 DEF OBSTACLE_RED_1 SolidBox {
-  translation 1.1 0.5 0.05
+  translation 0.03 0.11 0.05
   name "Obstacle_Red(1)"
   size 0.045 0.045 0.1
   appearance PBRAppearance {
@@ -65,7 +65,7 @@ DEF OBSTACLE_RED_1 SolidBox {
   }
 }
 DEF OBSTACLE_RED_2 SolidBox {
-  translation 0.5 -1.1 0.05
+  translation 0.1 -0.3 0.05
   name "Obstacle_Red(2)"
   size 0.045 0.045 0.1
   appearance PBRAppearance {
@@ -74,8 +74,18 @@ DEF OBSTACLE_RED_2 SolidBox {
     metalness 0
   }
 }
+DEF OBSTACLE_RED_3 SolidBox {
+  translation -0.13 0.12 0.05
+  name "Obstacle_Red(3)"
+  size 0.045 0.045 0.1
+  appearance PBRAppearance {
+    baseColor 0.7569 0.0706 0.1098
+    roughness 0.6
+    metalness 0
+  }
+}
 DEF OBSTACLE_GREEN_0 SolidBox {
-  translation 0.91 -0.5 0.05
+  translation 0.9 0 0.05
   name "Obstacle_Green"
   size 0.045 0.045 0.1
   appearance PBRAppearance {
@@ -85,7 +95,7 @@ DEF OBSTACLE_GREEN_0 SolidBox {
   }
 }
 DEF OBSTACLE_GREEN_1 SolidBox {
-  translation -0.5 0.89 0.05
+  translation 0 0.9 0.05
   name "Obstacle_Green(1)"
   size 0.045 0.045 0.1
   appearance PBRAppearance {
@@ -95,8 +105,18 @@ DEF OBSTACLE_GREEN_1 SolidBox {
   }
 }
 DEF OBSTACLE_GREEN_2 SolidBox {
-  translation -0.9 -0.5 0.05
+  translation -0.9 0 0.05
   name "Obstacle_Green(2)"
+  size 0.045 0.045 0.1
+  appearance PBRAppearance {
+    baseColor 0 0.545 0.161
+    roughness 0.6
+    metalness 0
+  }
+}
+DEF OBSTACLE_GREEN_3 SolidBox {
+  translation 0 -0.9 0.05
+  name "Obstacle_Green(3)"
   size 0.045 0.045 0.1
   appearance PBRAppearance {
     baseColor 0 0.545 0.161
@@ -147,7 +167,7 @@ SolidBox {
   }
 }
 AckermannVehicle {
-  translation -0.351441 -0.67067 0.0300003
+  translation -0.231441 -0.67067 0.0300003
   rotation 0 0 1 -5.307179586466759e-06
   controller "wro_driver"
   supervisor TRUE
@@ -261,15 +281,15 @@ AckermannVehicle {
   axisDevicesRearRight [
     RotationalMotor {
       name "motor_rear_right"
-      maxVelocity 20
-      maxTorque 0.5
+      maxVelocity 30
+      maxTorque 5
     }
   ]
   axisDevicesRearLeft [
     RotationalMotor {
       name "motor_rear_left"
-      maxVelocity 20
-      maxTorque 0.5
+      maxVelocity 30
+      maxTorque 5
     }
   ]
 }
