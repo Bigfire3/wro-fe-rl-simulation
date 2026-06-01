@@ -19,6 +19,18 @@ class RenderCallback(BaseCallback):
         self.render_training = render_training
 
     def _on_step(self) -> bool:
+        # Check global step count to update curriculum stage (Transition at 200,000 steps)
+        stage = 1
+        if self.num_timesteps >= 200000:
+            stage = 2
+            
+        try:
+            self.training_env.set_attr("curriculum_stage", stage)
+        except Exception:
+            pass
+            
+        self.logger.record("train/curriculum_stage", stage)
+
         if self.render_training:
             # Render the environment
             try:

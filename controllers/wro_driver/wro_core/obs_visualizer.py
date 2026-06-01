@@ -25,7 +25,7 @@ class ObsVisualizer:
             print(f"[ObsVisualizer] Warning: File '{img_path}' does not exist. Using blank background.")
             self.bg_img = np.zeros((self.window_size, self.window_size), dtype=np.uint8)
 
-    def draw(self, pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80):
+    def draw(self, pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80, p_150=None, p_corner=None):
         """
         Draws the observation debug window.
         
@@ -41,11 +41,22 @@ class ObsVisualizer:
         # 1. Convert grayscale background to BGR
         img = cv2.cvtColor(self.bg_img, cv2.COLOR_GRAY2BGR)
         
-        # 2. Draw Ideal Line (circular track of radius 1.0m centered at 1.5, 1.5)
-        cx_px = int(1.5 * self.scale)
-        cy_px = int(self.window_size - 1.5 * self.scale)
-        radius_px = int(1.0 * self.scale)
-        cv2.circle(img, (cx_px, cy_px), radius_px, color=(255, 180, 50), thickness=2, lineType=cv2.LINE_AA)
+        # 2. Draw Ideal Line (rounded square track)
+        from . import geometry
+        path_points = []
+        total_len = 4.0 + math.pi
+        n_points = 100
+        for i in range(n_points):
+            s = (i / n_points) * total_len
+            pt = geometry.get_point_at_s(s, driving_direction)
+            pt_x = int(pt[0] * self.scale)
+            pt_y = int(self.window_size - pt[1] * self.scale)
+            path_points.append((pt_x, pt_y))
+            
+        for i in range(n_points):
+            p1 = path_points[i]
+            p2 = path_points[(i + 1) % n_points]
+            cv2.line(img, p1, p2, color=(255, 180, 50), thickness=2, lineType=cv2.LINE_AA)
         
         rx, ry, ryaw = pose
         rx_px = int(rx * self.scale)
@@ -71,14 +82,32 @@ class ObsVisualizer:
             cv2.circle(img, (p80_px, p80_py), 6, (0, 165, 255), -1, lineType=cv2.LINE_AA) # Orange dot
             cv2.line(img, (rx_px, ry_px), (p80_px, p80_py), (0, 120, 220), 1, lineType=cv2.LINE_AA)
             
+        if p_150 is not None:
+            p150_px = int(p_150[0] * self.scale)
+            p150_py = int(self.window_size - p_150[1] * self.scale)
+            cv2.circle(img, (p150_px, p150_py), 6, (255, 0, 255), -1, lineType=cv2.LINE_AA) # Magenta dot
+            cv2.line(img, (rx_px, ry_px), (p150_px, p150_py), (200, 0, 200), 1, lineType=cv2.LINE_AA)
+            
+        if p_corner is not None:
+            pcr_px = int(p_corner[0] * self.scale)
+            pcr_py = int(self.window_size - p_corner[1] * self.scale)
+            # Draw next inner corner as a solid cyan dot
+            cv2.circle(img, (pcr_px, pcr_py), 5, (255, 255, 0), -1, lineType=cv2.LINE_AA)
+            
         # 4.5 Draw Obstacles from observation vector (reconstruct global position)
         if len(raw_obs) >= 12:
             alpha = ryaw + math.pi / 2.0
             cos_a = math.cos(alpha)
             sin_a = math.sin(alpha)
             
+            # Detect indices based on length
+            if len(raw_obs) >= 15:
+                o1_idx, o2_idx = 9, 12
+            else:
+                o1_idx, o2_idx = 6, 9
+            
             # Obstacle 1
-            o1_x_loc, o1_y_loc, o1_col = raw_obs[6], raw_obs[7], raw_obs[8]
+            o1_x_loc, o1_y_loc, o1_col = raw_obs[o1_idx], raw_obs[o1_idx+1], raw_obs[o1_idx+2]
             if not (abs(o1_x_loc - 2.0) < 1e-4 and abs(o1_y_loc) < 1e-4 and abs(o1_col) < 1e-4):
                 ox = rx + (o1_x_loc * cos_a - o1_y_loc * sin_a)
                 oy = ry + (o1_x_loc * sin_a + o1_y_loc * cos_a)
@@ -95,7 +124,7 @@ class ObsVisualizer:
                 cv2.putText(img, "1", (ox_px - 4, pt1_y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, lineType=cv2.LINE_AA)
                 
             # Obstacle 2
-            o2_x_loc, o2_y_loc, o2_col = raw_obs[9], raw_obs[10], raw_obs[11]
+            o2_x_loc, o2_y_loc, o2_col = raw_obs[o2_idx], raw_obs[o2_idx+1], raw_obs[o2_idx+2]
             if not (abs(o2_x_loc - 2.0) < 1e-4 and abs(o2_y_loc) < 1e-4 and abs(o2_col) < 1e-4):
                 ox = rx + (o2_x_loc * cos_a - o2_y_loc * sin_a)
                 oy = ry + (o2_x_loc * sin_a + o2_y_loc * cos_a)
@@ -137,14 +166,26 @@ class ObsVisualizer:
         cv2.putText(sidebar, "Idx  Feature  Raw  Norm", (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1, lineType=cv2.LINE_AA)
         cv2.line(sidebar, (15, 105), (sidebar_w - 15, 105), (50, 50, 50), 1)
         
-        labels = [
-            "ego_v_x", "steer", "lat_err", "hdg_err",
-            "y_loc_40", "y_loc_80", "obs1_x", "obs1_y",
-            "obs1_col", "obs2_x", "obs2_y", "obs2_col"
-        ]
+        if len(raw_obs) >= 15:
+            labels = [
+                "ego_v_x", "steer", "lat_err", "hdg_err",
+                "y_loc_40", "y_loc_80", "y_loc_150", "corner_x",
+                "corner_y", "obs1_x", "obs1_y", "obs1_col",
+                "obs2_x", "obs2_y", "obs2_col"
+            ]
+            num_feats = 15
+            y_spacing = 28
+        else:
+            labels = [
+                "ego_v_x", "steer", "lat_err", "hdg_err",
+                "y_loc_40", "y_loc_80", "obs1_x", "obs1_y",
+                "obs1_col", "obs2_x", "obs2_y", "obs2_col"
+            ]
+            num_feats = 12
+            y_spacing = 35
         
-        y_offset = 130
-        for i in range(12):
+        y_offset = 125
+        for i in range(num_feats):
             label = labels[i]
             r_val = float(raw_obs[i]) if i < len(raw_obs) else 0.0
             n_val = float(obs_vector[i]) if i < len(obs_vector) else 0.0
@@ -164,15 +205,15 @@ class ObsVisualizer:
             norm_str = f"{n_val: >6.2f}"
             
             # Render index
-            cv2.putText(sidebar, idx_str, (15, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (120, 120, 120), 1, lineType=cv2.LINE_AA)
+            cv2.putText(sidebar, idx_str, (15, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (120, 120, 120), 1, lineType=cv2.LINE_AA)
             # Render feature name
-            cv2.putText(sidebar, feat_str, (45, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (240, 240, 240), 1, lineType=cv2.LINE_AA)
+            cv2.putText(sidebar, feat_str, (45, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (240, 240, 240), 1, lineType=cv2.LINE_AA)
             # Render raw
-            cv2.putText(sidebar, raw_str, (155, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1, lineType=cv2.LINE_AA)
+            cv2.putText(sidebar, raw_str, (155, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1, lineType=cv2.LINE_AA)
             # Render norm
-            cv2.putText(sidebar, norm_str, (230, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, val_color, 1, lineType=cv2.LINE_AA)
+            cv2.putText(sidebar, norm_str, (230, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.38, val_color, 1, lineType=cv2.LINE_AA)
             
-            y_offset += 35
+            y_offset += y_spacing
             
         # Combine map and sidebar
         combined = np.hstack((img, sidebar))
@@ -181,11 +222,11 @@ class ObsVisualizer:
 # Global helper function for ease of use
 _global_visualizer = None
 
-def draw_observation_window(pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80, window_name="WRO Observation Debug"):
+def draw_observation_window(pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80, p_150=None, p_corner=None, window_name="WRO Observation Debug"):
     global _global_visualizer
     if _global_visualizer is None:
         _global_visualizer = ObsVisualizer()
     
-    combined_img = _global_visualizer.draw(pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80)
+    combined_img = _global_visualizer.draw(pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80, p_150, p_corner)
     cv2.imshow(window_name, combined_img)
     cv2.waitKey(1)

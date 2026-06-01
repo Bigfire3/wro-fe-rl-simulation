@@ -19,12 +19,6 @@ D_GAIN = 3.0
 CONTROL_FREQ = 10          # Hz
 TIME_STEP = 20             # ms
 
-# --- Checkpoints (16 points around circular loop of radius 1.0 centered at 1.5, 1.5) ---
-CHECKPOINTS = [
-    (1.5 + math.cos(-math.pi / 2.0 + i * math.pi / 8.0), 1.5 + math.sin(-math.pi / 2.0 + i * math.pi / 8.0))
-    for i in range(16)
-]
-
 # --- Observation Space Normalization Factors ---
 NORM_FACTORS = np.array([
     1.0,                         # ego_v_x
@@ -33,6 +27,9 @@ NORM_FACTORS = np.array([
     1.0 / (math.pi / 2.0),       # heading_error
     1.0 / 0.4,                   # y_loc_40
     1.0 / 0.8,                   # y_loc_80
+    1.0 / 1.5,                   # y_loc_150
+    1.0 / 2.5,                   # corner_x_loc
+    1.0 / 1.5,                   # corner_y_loc
     1.0 / 2.0,                   # obs1_x_loc
     1.0 / 2.0,                   # obs1_y_loc
     1.0,                         # obs1_color

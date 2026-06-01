@@ -62,8 +62,8 @@ def main():
     onnxable_model = OnnxablePolicy(policy)
     onnxable_model.eval()
     
-    # Dummy-Input representing 12-dimensional observation vector (batch size 1)
-    dummy_input = torch.randn(1, 12, dtype=torch.float32)
+    # Dummy-Input representing 15-dimensional observation vector (batch size 1)
+    dummy_input = torch.randn(1, 15, dtype=torch.float32)
     
     print(f"Exportiere ONNX-Modell nach: {onnx_path}")
     try:

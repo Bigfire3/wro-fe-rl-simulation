@@ -30,14 +30,18 @@ def compute_observation_vector(pose, obstacles, driving_direction, smoothed_stee
     diff_yaw = theta_robot - theta_tangent
     diff_yaw = (diff_yaw + math.pi) % (2.0 * math.pi) - math.pi
     
-    # 3. lookahead points (40cm & 80cm)
+    # 3. lookahead points (40cm & 80cm & 150cm)
     s_current = best_segment_idx * 2.0 + best_t * 2.0
+    total_len = 4.0 + math.pi
     
-    s_40 = (s_current + 0.4) % (2.0 * math.pi)
+    s_40 = (s_current + 0.4) % total_len
     p_40 = geometry.get_point_at_s(s_40, driving_direction)
     
-    s_80 = (s_current + 0.8) % (2.0 * math.pi)
+    s_80 = (s_current + 0.8) % total_len
     p_80 = geometry.get_point_at_s(s_80, driving_direction)
+    
+    s_150 = (s_current + 1.5) % total_len
+    p_150 = geometry.get_point_at_s(s_150, driving_direction)
     
     # Transform lookahead points to local coordinates
     alpha = ryaw + math.pi / 2.0
@@ -51,6 +55,17 @@ def compute_observation_vector(pose, obstacles, driving_direction, smoothed_stee
     dx_80 = p_80[0] - rx
     dy_80 = p_80[1] - ry
     y_loc_80 = -dx_80 * sin_a + dy_80 * cos_a
+    
+    dx_150 = p_150[0] - rx
+    dy_150 = p_150[1] - ry
+    y_loc_150 = -dx_150 * sin_a + dy_150 * cos_a
+    
+    # 3.5 Next Corner Position (Eck-Beacon)
+    corner_global = geometry.get_next_inner_corner(s_current, driving_direction)
+    dx_c = corner_global[0] - rx
+    dy_c = corner_global[1] - ry
+    corner_x_loc = dx_c * cos_a + dy_c * sin_a
+    corner_y_loc = -dx_c * sin_a + dy_c * cos_a
     
     # 4. Obstacles
     valid_obstacles = []
@@ -73,7 +88,7 @@ def compute_observation_vector(pose, obstacles, driving_direction, smoothed_stee
     # Sort by total Euclidean distance ascending
     valid_obstacles.sort(key=lambda item: item["dist"])
     
-    # Build raw observation vector
+    # Build raw observation vector (15 elements)
     raw_obs = np.array([
         ego_v_x,
         smoothed_steering,
@@ -81,6 +96,9 @@ def compute_observation_vector(pose, obstacles, driving_direction, smoothed_stee
         diff_yaw,
         y_loc_40,
         y_loc_80,
+        y_loc_150,
+        corner_x_loc,
+        corner_y_loc,
         # Obstacle 1
         valid_obstacles[0]["x_loc"] if len(valid_obstacles) > 0 else 2.0,
         valid_obstacles[0]["y_loc"] if len(valid_obstacles) > 0 else 0.0,
@@ -93,7 +111,7 @@ def compute_observation_vector(pose, obstacles, driving_direction, smoothed_stee
     
     obs_vector = np.clip(raw_obs * config.NORM_FACTORS, -1.0, 1.0)
     
-    return raw_obs, obs_vector, best_closest, p_40, p_80
+    return raw_obs, obs_vector, best_closest, p_40, p_80, p_150, corner_global
 
 class RuleBasedPlanner:
     def __init__(self):

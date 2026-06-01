@@ -54,10 +54,10 @@ class WebotsWroEnv(gym.Env):
             low=np.array([-1.0, 0.0], dtype=np.float32), high=np.array([1.0, 1.0], dtype=np.float32), shape=(2,), dtype=np.float32
         )
         
-        # Observation space (12 elements, normalized to [-1.0, 1.0]):
+        # Observation space (15 elements, normalized to [-1.0, 1.0]):
         self.observation_space = spaces.Box(
-            low=np.array([-1.0] * 12, dtype=np.float32),
-            high=np.array([1.0] * 12, dtype=np.float32),
+            low=np.array([-1.0] * 15, dtype=np.float32),
+            high=np.array([1.0] * 15, dtype=np.float32),
             dtype=np.float32
         )
         
@@ -109,17 +109,22 @@ class WebotsWroEnv(gym.Env):
         # State tracking variables
         self.imu_yaw_initial = None
         self.stagnation_counter = 0
-        self.current_checkpoint_idx = 0
         self.total_steps = 0
         self.passed_obstacle_ids = set()
-        self.checkpoints_cleared_this_lap = 0
+        self.curriculum_stage = 1
+        self.prev_path_s = 0.0
+        self.current_path_s = 0.0
+        self.prev_steer_action = 0.0
+        self.cumulative_progress = 0.0
         
         # Variables stored for visualization/rendering
-        self.raw_obs = np.zeros(12, dtype=np.float32)
-        self.obs_vector = np.zeros(12, dtype=np.float32)
+        self.raw_obs = np.zeros(15, dtype=np.float32)
+        self.obs_vector = np.zeros(15, dtype=np.float32)
         self.best_closest = None
         self.p_40 = None
         self.p_80 = None
+        self.p_150 = None
+        self.p_corner = None
         self.rx = 1.5
         self.ry = 0.5
         self.ryaw = 0.0
@@ -164,9 +169,7 @@ class WebotsWroEnv(gym.Env):
         self.estimator.reset()
         
         # Calibrate starting position
-        collected_scans = []
-        import warnings
-        
+        calibrated = False
         for _ in range(10):
             if self.supervisor.step(self.timestep) == -1:
                 break
@@ -174,27 +177,16 @@ class WebotsWroEnv(gym.Env):
                 self.lidar, self.imu, self.camera, self.imu_yaw_initial
             )
             lidar_ranges = sensor_data["lidar_ranges"]
-            if len(lidar_ranges) > 0:
-                collected_scans.append(lidar_ranges)
-                
-        calibrated = False
-        if len(collected_scans) >= 10:
-            scans_arr = np.array(collected_scans)
-            invalid_mask = (scans_arr <= 0.01) | (scans_arr >= 2.0) | np.isinf(scans_arr) | np.isnan(scans_arr)
-            scans_arr[invalid_mask] = np.nan
-            
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", category=RuntimeWarning)
-                avg_ranges = np.nanmean(scans_arr, axis=0)
-            avg_ranges = np.nan_to_num(avg_ranges, nan=0.0)
-            
             try:
-                x_init, y_init, yaw_init, direction, debug_img = self.estimator.calibrate_from_scans(avg_ranges)
-                print(f"[Gym Env Calibration] Resolved driving direction: {direction}")
-                self.estimator.set_calibrated_pose(x_init, y_init, yaw_init, direction)
-                calibrated = True
+                res = self.estimator.add_calibration_scan(lidar_ranges)
+                if res is not None:
+                    _, _, _, direction, _ = res
+                    print(f"[Gym Env Calibration] Resolved driving direction: {direction}")
+                    calibrated = True
+                    break
             except Exception as e:
                 print(f"[Gym Env Calibration] Error during calibration: {e}")
+                break
                 
         if not calibrated:
             # Fallback based on generated yaw
@@ -204,15 +196,12 @@ class WebotsWroEnv(gym.Env):
             
         self.passed_obstacle_ids = set()
         self.stagnation_counter = 0
-        self.checkpoints_cleared_this_lap = 0
-        
-        # Nearest checkpoint index
-        dists = [math.hypot(start_x_est - cp[0], start_y_est - cp[1]) for cp in config.CHECKPOINTS]
-        self.current_checkpoint_idx = int(np.argmin(dists))
-        
+        self.prev_steer_action = 0.0
+        self.cumulative_progress = 0.0
         self.total_steps = 0
         
         obs = self._get_obs()
+        self.prev_path_s = self.current_path_s
         return obs, {}
 
     def _get_obs(self):
@@ -234,7 +223,7 @@ class WebotsWroEnv(gym.Env):
             ego_v_x = 0.0
             
         # 3. Planning (observation computation)
-        self.raw_obs, self.obs_vector, self.best_closest, self.p_40, self.p_80 = planning.compute_observation_vector(
+        self.raw_obs, self.obs_vector, self.best_closest, self.p_40, self.p_80, self.p_150, self.p_corner = planning.compute_observation_vector(
             pose=(rx, ry, ryaw),
             obstacles=self.estimator.obstacle_mapper.obstacles,
             driving_direction=self.estimator.driving_direction,
@@ -243,12 +232,24 @@ class WebotsWroEnv(gym.Env):
         )
         self.rx, self.ry, self.ryaw = rx, ry, ryaw
         
+        # Track path progress s
+        from wro_core import geometry
+        best_closest, best_dist, best_tangent, best_segment_idx, best_t = geometry.get_closest_point_on_path(
+            rx, ry, self.estimator.driving_direction
+        )
+        self.current_path_s = best_segment_idx * 2.0 + best_t * 2.0
+        
         return self.obs_vector
 
     def step(self, action):
         # 1. Apply action
         target_steering = float(action[0]) * config.MAX_STEERING
-        target_speed = float(action[1]) * config.MAX_MOTOR_VELOCITY
+        if self.curriculum_stage == 1:
+            # Stage 1: fixed target speed (30% of max motor velocity, i.e., 3.0 rad/s)
+            target_speed = 0.3 * config.MAX_MOTOR_VELOCITY
+        else:
+            # Stage 2: variable speed control
+            target_speed = float(action[1]) * config.MAX_MOTOR_VELOCITY
         
         # 4. Control
         self.car_controller.apply(
@@ -278,15 +279,47 @@ class WebotsWroEnv(gym.Env):
         lateral_error_normalized = float(obs[2])
         heading_error_normalized = float(obs[3])
         
-        # Reward driving fast: quadratic speed ratio with step penalty
-        speed_reward = (max(0.0, speed_ratio) ** 2) * 5.0
+        # Step penalty
         step_penalty = -0.3
         
-        # Penalties for deviation
-        lateral_penalty = -abs(lateral_error_normalized) * 1.5
-        heading_penalty = -abs(heading_error_normalized) * 0.5
+        # Smoothness penalty
+        steer_diff = float(action[0]) - self.prev_steer_action
+        self.prev_steer_action = float(action[0])
+        smoothness_penalty = -0.15 * (steer_diff ** 2)
         
-        reward = speed_reward + step_penalty + lateral_penalty + heading_penalty
+        # Compute progress s diff
+        total_len = 4.0 + math.pi
+        diff_s = self.current_path_s - self.prev_path_s
+        if diff_s < -total_len / 2.0:
+            diff_s += total_len
+        elif diff_s > total_len / 2.0:
+            diff_s -= total_len
+        self.prev_path_s = self.current_path_s
+        
+        # Accumulate progress
+        self.cumulative_progress += diff_s
+        
+        if self.curriculum_stage == 1:
+            # Stage 1: Safety focus (high lateral penalty, standard speed reward)
+            lateral_penalty = -abs(lateral_error_normalized) * 1.5
+            heading_penalty = -abs(heading_error_normalized) * 0.5
+            speed_reward = (max(0.0, speed_ratio) ** 2) * 5.0
+            
+            reward = speed_reward + step_penalty + lateral_penalty + heading_penalty + smoothness_penalty
+        else:
+            # Stage 2: Performance focus (progress-based reward, relaxed lateral penalty)
+            progress_reward = diff_s * 15.0
+            
+            lat_err_abs = abs(lateral_error_normalized)
+            if lat_err_abs <= 0.5: # within +/- 25cm
+                lateral_penalty = 0.0
+            else:
+                lateral_penalty = -3.0 * ((lat_err_abs - 0.5) ** 2)
+                
+            heading_penalty = 0.0
+            action_steer_penalty = -0.5 * abs(float(action[0])) * max(0.0, speed_ratio)
+            
+            reward = progress_reward + step_penalty + lateral_penalty + heading_penalty + smoothness_penalty + action_steer_penalty
         
         terminated = False
         truncated = False
@@ -307,28 +340,10 @@ class WebotsWroEnv(gym.Env):
             terminated = True
             print("[Gym Env] COLLISION detected! Resetting.")
             
-        # Checkpoint Progress tracking
-        step_dir = 1 if self.estimator.driving_direction == "CCW" else -1
-        for lookahead in [1, 2]:
-            idx = (self.current_checkpoint_idx + lookahead * step_dir) % len(config.CHECKPOINTS)
-            target_cp = config.CHECKPOINTS[idx]
-            dist_to_cp = math.hypot(rx - target_cp[0], ry - target_cp[1])
-            if dist_to_cp < 0.55:
-                crossed_zero = False
-                for i in range(1, lookahead + 1):
-                    check_idx = (self.current_checkpoint_idx + i * step_dir) % len(config.CHECKPOINTS)
-                    if check_idx == 0:
-                        crossed_zero = True
-                        
-                self.current_checkpoint_idx = idx
-                self.checkpoints_cleared_this_lap += lookahead
-                
-                if crossed_zero:
-                    if self.checkpoints_cleared_this_lap >= len(config.CHECKPOINTS) - 2:
-                        terminated = True
-                        print(f"[Gym Env] LAP completed ({self.estimator.driving_direction})! Terminating episode.")
-                    self.checkpoints_cleared_this_lap = 0
-                break
+        # Lap completion check based on cumulative progress
+        if self.cumulative_progress >= (total_len - 0.2):
+            terminated = True
+            print(f"[Gym Env] LAP completed ({self.estimator.driving_direction})! Terminating episode.")
                 
         # Stagnation check
         if ego_v_x < 0.01:
@@ -391,7 +406,7 @@ class WebotsWroEnv(gym.Env):
             "y": ry,
             "yaw": ryaw,
             "collision": collision,
-            "checkpoint": self.current_checkpoint_idx
+            "progress": self.cumulative_progress
         }
         
         return obs, reward, terminated, truncated, info
@@ -402,14 +417,6 @@ class WebotsWroEnv(gym.Env):
             vis_img, [self.rx, self.ry, self.ryaw], self.estimator.icp_localizer.scale, self.estimator.icp_localizer.window_size
         )
         
-        # Draw next checkpoint
-        step_dir = 1 if self.estimator.driving_direction == "CCW" else -1
-        next_idx = (self.current_checkpoint_idx + step_dir) % len(config.CHECKPOINTS)
-        cx, cy = config.CHECKPOINTS[next_idx]
-        cx_px = int(cx * self.estimator.icp_localizer.scale)
-        cy_px = int(self.estimator.icp_localizer.window_size - cy * self.estimator.icp_localizer.scale)
-        cv2.circle(vis_img, (cx_px, cy_px), 6, (0, 255, 255), -1, lineType=cv2.LINE_AA)
-        
         draw_observation_window(
             pose=(self.rx, self.ry, self.ryaw),
             raw_obs=self.raw_obs,
@@ -418,6 +425,8 @@ class WebotsWroEnv(gym.Env):
             best_closest=self.best_closest,
             p_40=self.p_40,
             p_80=self.p_80,
+            p_150=self.p_150,
+            p_corner=self.p_corner,
             window_name="WRO Observation Debug"
         )
             

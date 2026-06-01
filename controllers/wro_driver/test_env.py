@@ -50,16 +50,18 @@ def main():
                 # Konsolen-Logs alle 10 Schritte
                 if step % 10 == 0:
                     print(f"Schritt {step:03d} | Pose: x={info['x']:.2f}, y={info['y']:.2f}, yaw={info['yaw']:.2f} | "
-                          f"Checkpoint: {info['checkpoint']} | Reward: {reward:+.2f} | Total Reward: {total_reward:+.2f}")
-                    print(f"          Obs (v_x, steer, lat_e, head_e, la40, la80, obs1_x, obs1_y, obs1_c): "
-                          f"{obs[0]:.2f}, {obs[1]:.2f}, {obs[2]:.2f}, {obs[3]:.2f}, {obs[4]:.2f}, {obs[5]:.2f}, {obs[6]:.2f}, {obs[7]:.2f}, {obs[8]:.1f}")
+                          f"Progress: {info['progress']:.2f}m | Reward: {reward:+.2f} | Total Reward: {total_reward:+.2f}")
+                    print(f"          Obs (v_x, steer, lat_e, head_e, la40, la80, la150, corner_x, corner_y): "
+                          f"{obs[0]:.2f}, {obs[1]:.2f}, {obs[2]:.2f}, {obs[3]:.2f}, {obs[4]:.2f}, {obs[5]:.2f}, {obs[6]:.2f}, {obs[7]:.2f}, {obs[8]:.2f}")
+                    print(f"          Obs (obs1_x, obs1_y, obs1_c, obs2_x, obs2_y, obs2_c): "
+                          f"{obs[9]:.2f}, {obs[10]:.2f}, {obs[11]:.1f}, {obs[12]:.2f}, {obs[13]:.2f}, {obs[14]:.1f}")
                 
                 # Kurze Pause, um die Konsole lesbar zu halten
                 time.sleep(0.02)
                 
             print(f"\n--- Episode {episode + 1} beendet nach {step} Schritten ---")
             print(f"End-Pose: x={info['x']:.2f}, y={info['y']:.2f}")
-            print(f"Erreichte Checkpoints: {info['checkpoint']}")
+            print(f"Fortschritt: {info['progress']:.2f}m")
             print(f"Gesamt-Belohnung: {total_reward:+.2f}")
             print("=" * 60)
             
