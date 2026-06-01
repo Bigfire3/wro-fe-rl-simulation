@@ -142,7 +142,11 @@ class WebotsWroEnv(gym.Env):
         # Random start pose
         start_x_est = self.np_random.uniform(1.2, 1.8)
         start_y_est = self.np_random.uniform(0.2, 0.8)
-        yaw_est = self.np_random.uniform(-np.pi, np.pi)
+        if self.curriculum_stage == 1:
+            base_yaw = self.np_random.choice([-np.pi / 2.0, np.pi / 2.0])
+            yaw_est = base_yaw + self.np_random.uniform(-0.1, 0.1)
+        else:
+            yaw_est = self.np_random.uniform(-np.pi, np.pi)
         
         
         # Convert to Webots coordinates
