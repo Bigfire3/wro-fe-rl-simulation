@@ -116,6 +116,32 @@ class ObstacleMapper:
 
         return True
 
+    def get_edge_visibilities(self, rx, ry, target_obs):
+        """
+        Berechnet die Sichtbarkeit und Positionen der Kanten des Hindernisses.
+        """
+        ox, oy = target_obs.position
+        theta = math.atan2(oy - ry, ox - rx)
+        
+        # Versatz senkrecht zur Sichtlinie (Radius des Hindernisses = 0.025m)
+        dx_perp = -math.sin(theta) * 0.025
+        dy_perp = math.cos(theta) * 0.025
+        
+        pt_left_x, pt_left_y = ox + dx_perp, oy + dy_perp
+        pt_right_x, pt_right_y = ox - dx_perp, oy - dy_perp
+        
+        visible_left = self.is_visible(rx, ry, pt_left_x, pt_left_y, target_obs)
+        visible_right = self.is_visible(rx, ry, pt_right_x, pt_right_y, target_obs)
+        
+        return visible_left, visible_right, (pt_left_x, pt_left_y), (pt_right_x, pt_right_y)
+
+    def is_fully_visible(self, rx, ry, target_obs):
+        """
+        Prüft, ob das Ziel-Hindernis zu 100% sichtbar ist (keine Teilverdeckungen).
+        Beide Kanten (links und rechts) müssen unverdeckt sein.
+        """
+        visible_left, visible_right, _, _ = self.get_edge_visibilities(rx, ry, target_obs)
+        return visible_left and visible_right
 
     def update(self, robot_pose, outlier_points):
         """
@@ -189,7 +215,7 @@ class ObstacleMapper:
             dist = math.hypot(robot_x - obs.position[0], robot_y - obs.position[1])
             if dist < 2.0:
                 # Prüfen, ob Sichtachse blockiert ist (Wände oder andere Hindernisse)
-                if self.is_visible(robot_x, robot_y, obs.position[0], obs.position[1], obs):
+                if self.is_fully_visible(robot_x, robot_y, obs):
                     obs.confidence -= 0.01
                     if obs.confidence <= 0.0:
                         if obs in self.obstacles:
@@ -221,7 +247,7 @@ class ObstacleMapper:
                 
             # 2. Sichtbarkeit prüfen (Wände und andere Hindernisse)
             ox, oy = obs.position
-            if not self.is_visible(rx, ry, ox, oy, obs):
+            if not self.is_fully_visible(rx, ry, obs):
                 continue
                 
             # 3. Transformation ins Roboterkoordinatensystem (mit alpha)
@@ -365,7 +391,7 @@ class ObstacleMapper:
                 continue
                 
             # Sichtbarkeit prüfen
-            if not self.is_visible(rx, ry, ox, oy, obs):
+            if not self.is_fully_visible(rx, ry, obs):
                 continue
             
             # Bounding Box Farbe bestimmen
@@ -434,17 +460,29 @@ class ObstacleMapper:
             # Gefülltes Quadrat zeichnen
             cv2.rectangle(img, (pt1_x, pt1_y), (pt2_x, pt2_y), color, -1)
 
-            # Sichtlinie zeichnen, falls im Sichtbereich und Sichtachse frei
+            # Sichtlinie zeichnen, falls im Sichtbereich und mindestens ein Strahl frei
             dist = math.hypot(robot_x - ox, robot_y - oy)
             if dist < 2.0:
-                if self.is_visible(robot_x, robot_y, ox, oy, obs):
+                visible_left, visible_right, pt_left, pt_right = self.get_edge_visibilities(robot_x, robot_y, obs)
+                
+                # Wenn beide Strahlen rot/blockiert sind, zeichnen wir sie nicht
+                if visible_left or visible_right:
                     # Roboter-Pixelkoordinaten
                     rx_px = int(robot_x * scale)
                     ry_px = int(window_size - robot_y * scale)
-                    # Hindernis-Mittelpunkt
-                    ox_px = int(ox * scale)
-                    oy_px = int(window_size - oy * scale)
-                    # Dünne grüne Linie
-                    cv2.line(img, (rx_px, ry_px), (ox_px, oy_px), (0, 255, 0), 1, lineType=cv2.LINE_AA)
+                    
+                    # Pixelkoordinaten der Ränder
+                    pl_x_px = int(pt_left[0] * scale)
+                    pl_y_px = int(window_size - pt_left[1] * scale)
+                    pr_x_px = int(pt_right[0] * scale)
+                    pr_y_px = int(window_size - pt_right[1] * scale)
+                    
+                    # Linken Strahl zeichnen (Grün wenn frei, Rot wenn blockiert)
+                    color_l = (0, 255, 0) if visible_left else (0, 0, 255)
+                    cv2.line(img, (rx_px, ry_px), (pl_x_px, pl_y_px), color_l, 1, lineType=cv2.LINE_AA)
+                    
+                    # Rechten Strahl zeichnen (Grün wenn frei, Rot wenn blockiert)
+                    color_r = (0, 255, 0) if visible_right else (0, 0, 255)
+                    cv2.line(img, (rx_px, ry_px), (pr_x_px, pr_y_px), color_r, 1, lineType=cv2.LINE_AA)
 
         return img
