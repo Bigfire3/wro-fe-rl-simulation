@@ -95,6 +95,12 @@ global_obs_data = (None, None, None, None, None)
 # Reset obstacles
 randomize_obstacles(robot, train=False)
 
+# --- Action Repeat configuration ---
+frame_skip = int(1000 / (config.CONTROL_FREQ * config.TIME_STEP))
+if frame_skip < 1:
+    frame_skip = 1
+calibration_step_count = None
+
 # --- MAIN LOOP ---
 step_count = 0
 
@@ -106,6 +112,15 @@ while robot.step(config.TIME_STEP) != -1:
         cv2.waitKey(1)
     except Exception:
         pass
+        
+    # Skip planning, estimation, and control updates between control steps
+    # to maintain a consistent control frequency (e.g. 10 Hz / every 100ms)
+    if estimator.initial_pose_found:
+        if calibration_step_count is None:
+            calibration_step_count = step_count
+            
+        if (step_count - calibration_step_count) % frame_skip != 0:
+            continue
         
     # --- 1. STAGE 1: PERCEPTION ---
     sensor_data, imu_yaw_initial = perception.read_sensors(lidar, imu, camera, imu_yaw_initial)

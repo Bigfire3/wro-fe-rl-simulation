@@ -17,7 +17,7 @@ D_GAIN = 3.0
 
 # --- Training / Gym Environment configuration ---
 CONTROL_FREQ = 10          # Hz
-TIME_STEP = 32             # ms
+TIME_STEP = 20             # ms
 
 # --- Checkpoints (16 points around circular loop of radius 1.0 centered at 1.5, 1.5) ---
 CHECKPOINTS = [
