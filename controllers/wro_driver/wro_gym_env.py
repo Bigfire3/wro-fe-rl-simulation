@@ -130,6 +130,11 @@ class WebotsWroEnv(gym.Env):
         self.ryaw = 0.0
         self.camera_image = None
 
+    def set_curriculum_stage(self, stage):
+        if self.curriculum_stage != stage:
+            self.curriculum_stage = stage
+            print(f"[Gym Env] Internal curriculum stage updated to {stage}")
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         

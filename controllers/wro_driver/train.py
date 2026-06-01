@@ -25,7 +25,7 @@ class RenderCallback(BaseCallback):
             stage = 2
             
         try:
-            self.training_env.set_attr("curriculum_stage", stage)
+            self.training_env.env_method("set_curriculum_stage", stage)
         except Exception:
             pass
             
