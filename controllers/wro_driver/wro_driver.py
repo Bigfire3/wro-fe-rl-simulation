@@ -161,7 +161,7 @@ while robot.step(config.TIME_STEP) != -1:
         smoothed_steering=car_controller.smoothed_steering,
         ego_v_x=ego_v_x
     )
-    raw_obs, obs_vector, best_closest, p_30, p_60 = global_obs_data
+    raw_obs, obs_vector, best_closest, p_40, p_80 = global_obs_data
     
     # --- 3. STAGE 3: PLANNING ---
     if USE_RL:
@@ -218,8 +218,8 @@ while robot.step(config.TIME_STEP) != -1:
                 obs_vector=obs_vector,
                 driving_direction=estimator.driving_direction,
                 best_closest=best_closest,
-                p_30=p_30,
-                p_60=p_60,
+                p_40=p_40,
+                p_80=p_80,
                 window_name="WRO Observation Debug"
             )
         try:

@@ -112,8 +112,8 @@ class WebotsWroEnv(gym.Env):
         self.raw_obs = np.zeros(12, dtype=np.float32)
         self.obs_vector = np.zeros(12, dtype=np.float32)
         self.best_closest = None
-        self.p_30 = None
-        self.p_60 = None
+        self.p_40 = None
+        self.p_80 = None
         self.rx = 1.5
         self.ry = 0.5
         self.ryaw = 0.0
@@ -228,7 +228,7 @@ class WebotsWroEnv(gym.Env):
             ego_v_x = 0.0
             
         # 3. Planning (observation computation)
-        self.raw_obs, self.obs_vector, self.best_closest, self.p_30, self.p_60 = planning.compute_observation_vector(
+        self.raw_obs, self.obs_vector, self.best_closest, self.p_40, self.p_80 = planning.compute_observation_vector(
             pose=(rx, ry, ryaw),
             obstacles=self.estimator.obstacle_mapper.obstacles,
             driving_direction=self.estimator.driving_direction,
@@ -414,8 +414,8 @@ class WebotsWroEnv(gym.Env):
             obs_vector=self.obs_vector,
             driving_direction=self.estimator.driving_direction,
             best_closest=self.best_closest,
-            p_30=self.p_30,
-            p_60=self.p_60,
+            p_40=self.p_40,
+            p_80=self.p_80,
             window_name="WRO Observation Debug"
         )
             

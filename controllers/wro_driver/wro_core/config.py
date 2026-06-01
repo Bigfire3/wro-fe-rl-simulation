@@ -31,8 +31,8 @@ NORM_FACTORS = np.array([
     1.0 / MAX_STEERING,          # smoothed_steering
     1.0 / 0.5,                   # lateral_error
     1.0 / (math.pi / 2.0),       # heading_error
-    1.0 / 0.3,                   # y_loc_30
-    1.0 / 0.6,                   # y_loc_60
+    1.0 / 0.4,                   # y_loc_40
+    1.0 / 0.8,                   # y_loc_80
     1.0 / 2.0,                   # obs1_x_loc
     1.0 / 2.0,                   # obs1_y_loc
     1.0,                         # obs1_color

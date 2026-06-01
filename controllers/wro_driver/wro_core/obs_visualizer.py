@@ -25,7 +25,7 @@ class ObsVisualizer:
             print(f"[ObsVisualizer] Warning: File '{img_path}' does not exist. Using blank background.")
             self.bg_img = np.zeros((self.window_size, self.window_size), dtype=np.uint8)
 
-    def draw(self, pose, raw_obs, obs_vector, driving_direction, best_closest, p_30, p_60):
+    def draw(self, pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80):
         """
         Draws the observation debug window.
         
@@ -35,21 +35,17 @@ class ObsVisualizer:
             obs_vector: numpy array of 12 elements (normalized and clipped)
             driving_direction: "CCW" or "CW"
             best_closest: coordinates of closest point on path (x, y) or None
-            p_30: coordinates of lookahead point 30cm (x, y) or None
-            p_60: coordinates of lookahead point 60cm (x, y) or None
+            p_40: coordinates of lookahead point 40cm (x, y) or None
+            p_80: coordinates of lookahead point 80cm (x, y) or None
         """
         # 1. Convert grayscale background to BGR
         img = cv2.cvtColor(self.bg_img, cv2.COLOR_GRAY2BGR)
         
-        # 2. Draw Ideal Line (the 2x2 meter square track)
-        # Vertices in real-world coordinates: (0.5, 0.5) to (2.5, 2.5)
-        pts_ideal = np.array([
-            [int(0.5 * self.scale), int(self.window_size - 0.5 * self.scale)],
-            [int(2.5 * self.scale), int(self.window_size - 0.5 * self.scale)],
-            [int(2.5 * self.scale), int(self.window_size - 2.5 * self.scale)],
-            [int(0.5 * self.scale), int(self.window_size - 2.5 * self.scale)]
-        ], dtype=np.int32)
-        cv2.polylines(img, [pts_ideal], isClosed=True, color=(255, 180, 50), thickness=2, lineType=cv2.LINE_AA)
+        # 2. Draw Ideal Line (circular track of radius 1.0m centered at 1.5, 1.5)
+        cx_px = int(1.5 * self.scale)
+        cy_px = int(self.window_size - 1.5 * self.scale)
+        radius_px = int(1.0 * self.scale)
+        cv2.circle(img, (cx_px, cy_px), radius_px, color=(255, 180, 50), thickness=2, lineType=cv2.LINE_AA)
         
         rx, ry, ryaw = pose
         rx_px = int(rx * self.scale)
@@ -62,18 +58,18 @@ class ObsVisualizer:
             cv2.line(img, (rx_px, ry_px), (cx_px, cy_px), (0, 0, 255), 2, lineType=cv2.LINE_AA)
             cv2.circle(img, (cx_px, cy_px), 5, (0, 0, 255), -1, lineType=cv2.LINE_AA)
             
-        # 4. Draw lookahead points (30cm & 60cm)
-        if p_30 is not None:
-            p30_px = int(p_30[0] * self.scale)
-            p30_py = int(self.window_size - p_30[1] * self.scale)
-            cv2.circle(img, (p30_px, p30_py), 6, (0, 255, 255), -1, lineType=cv2.LINE_AA) # Yellow dot
-            cv2.line(img, (rx_px, ry_px), (p30_px, p30_py), (0, 200, 200), 1, lineType=cv2.LINE_AA)
+        # 4. Draw lookahead points (40cm & 80cm)
+        if p_40 is not None:
+            p40_px = int(p_40[0] * self.scale)
+            p40_py = int(self.window_size - p_40[1] * self.scale)
+            cv2.circle(img, (p40_px, p40_py), 6, (0, 255, 255), -1, lineType=cv2.LINE_AA) # Yellow dot
+            cv2.line(img, (rx_px, ry_px), (p40_px, p40_py), (0, 200, 200), 1, lineType=cv2.LINE_AA)
             
-        if p_60 is not None:
-            p60_px = int(p_60[0] * self.scale)
-            p60_py = int(self.window_size - p_60[1] * self.scale)
-            cv2.circle(img, (p60_px, p60_py), 6, (0, 165, 255), -1, lineType=cv2.LINE_AA) # Orange dot
-            cv2.line(img, (rx_px, ry_px), (p60_px, p60_py), (0, 120, 220), 1, lineType=cv2.LINE_AA)
+        if p_80 is not None:
+            p80_px = int(p_80[0] * self.scale)
+            p80_py = int(self.window_size - p_80[1] * self.scale)
+            cv2.circle(img, (p80_px, p80_py), 6, (0, 165, 255), -1, lineType=cv2.LINE_AA) # Orange dot
+            cv2.line(img, (rx_px, ry_px), (p80_px, p80_py), (0, 120, 220), 1, lineType=cv2.LINE_AA)
             
         # 4.5 Draw Obstacles from observation vector (reconstruct global position)
         if len(raw_obs) >= 12:
@@ -143,7 +139,7 @@ class ObsVisualizer:
         
         labels = [
             "ego_v_x", "steer", "lat_err", "hdg_err",
-            "y_loc_30", "y_loc_60", "obs1_x", "obs1_y",
+            "y_loc_40", "y_loc_80", "obs1_x", "obs1_y",
             "obs1_col", "obs2_x", "obs2_y", "obs2_col"
         ]
         
@@ -185,11 +181,11 @@ class ObsVisualizer:
 # Global helper function for ease of use
 _global_visualizer = None
 
-def draw_observation_window(pose, raw_obs, obs_vector, driving_direction, best_closest, p_30, p_60, window_name="WRO Observation Debug"):
+def draw_observation_window(pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80, window_name="WRO Observation Debug"):
     global _global_visualizer
     if _global_visualizer is None:
         _global_visualizer = ObsVisualizer()
     
-    combined_img = _global_visualizer.draw(pose, raw_obs, obs_vector, driving_direction, best_closest, p_30, p_60)
+    combined_img = _global_visualizer.draw(pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80)
     cv2.imshow(window_name, combined_img)
     cv2.waitKey(1)
