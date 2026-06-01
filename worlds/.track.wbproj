@@ -10,4 +10,4 @@ orthographicViewHeight: 1
 textFiles: -1
 globalOptionalRendering: CameraFrustums
 consoles: Console:All:All
-renderingDevicePerspectives: vehicle:camera;0;0.769041;0.687619;0.729611
+renderingDevicePerspectives: vehicle:camera;0;0.371732;0.687619;0.729611

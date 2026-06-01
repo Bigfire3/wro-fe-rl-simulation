@@ -45,9 +45,22 @@ class Controller:
             speed_factor = 1.0 - (abs(self.smoothed_steering) / config.MAX_STEERING) * 0.3
             speed = target_speed * max(0.7, speed_factor)
             
+        # Electronic differential for rear wheels
+        # If turning right (smoothed_steering > 0), the right wheel is inner (slower) and left is outer (faster).
+        diff_factor = (config.TRACK_FRONT / (2.0 * config.WHEELBASE)) * math.tan(self.smoothed_steering)
+        speed_left = speed * (1.0 + diff_factor)
+        speed_right = speed * (1.0 - diff_factor)
+        
+        # Scale down if either wheel speed exceeds physical limits
+        max_wheel_speed = max(abs(speed_left), abs(speed_right))
+        if max_wheel_speed > config.MAX_MOTOR_VELOCITY:
+            scale = config.MAX_MOTOR_VELOCITY / max_wheel_speed
+            speed_left *= scale
+            speed_right *= scale
+
         # Drive motors
-        motor_right.setVelocity(speed)
-        motor_left.setVelocity(speed)
+        motor_right.setVelocity(speed_right)
+        motor_left.setVelocity(speed_left)
         
         # Ackermann steering servos
         left_angle, right_angle = ackermann_angles(self.smoothed_steering)

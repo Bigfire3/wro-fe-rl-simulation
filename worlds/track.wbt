@@ -11,7 +11,7 @@ WorldInfo {
   contactProperties [
     ContactProperties {
       coulombFriction [
-        8
+        1.5
       ]
       bounce 0
       softCFM 0.0001
@@ -20,7 +20,7 @@ WorldInfo {
 }
 Viewpoint {
   orientation 0.2698391878420586 -0.2620747084530052 -0.9265547257955197 4.641182712718807
-  position 0.4028178035778984 -5.067290318789296 3.076368794382824
+  position 0.3893540961065777 -6.735557771692166 4.116938933844932
 }
 Background {
   skyColor [
@@ -217,10 +217,6 @@ AckermannVehicle {
       translation 0.07 0 0
       name "imu"
     }
-    Accelerometer {
-      translation 0.07 0 0
-      resolution 0.1
-    }
   ]
   boundingObject Pose {
     translation 0.06 0 0.005
@@ -286,15 +282,17 @@ AckermannVehicle {
   axisDevicesRearRight [
     RotationalMotor {
       name "motor_rear_right"
+      controlPID 1 0 0
       maxVelocity 50
-      maxTorque 5
+      maxTorque 0.3
     }
   ]
   axisDevicesRearLeft [
     RotationalMotor {
       name "motor_rear_left"
+      controlPID 1 0 0
       maxVelocity 50
-      maxTorque 5
+      maxTorque 0.3
     }
   ]
 }
