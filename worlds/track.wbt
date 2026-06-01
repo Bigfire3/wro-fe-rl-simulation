@@ -199,8 +199,8 @@ AckermannVehicle {
       translation 0.16 0 0.01
       rotation 0 1 0 0
       fieldOfView 2.7925268
-      width 160
-      height 40
+      width 640
+      height 160
     }
     Lidar {
       translation 0.07 0 0.045

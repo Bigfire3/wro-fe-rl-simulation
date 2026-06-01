@@ -9,4 +9,4 @@ renderingMode: PLAIN
 orthographicViewHeight: 1
 textFiles: -1
 consoles: Console:All:All
-renderingDevicePerspectives: vehicle:camera;0;0.8;0.75752;0.586159
+renderingDevicePerspectives: vehicle:camera;0;0.8;0.690734;0.586159
