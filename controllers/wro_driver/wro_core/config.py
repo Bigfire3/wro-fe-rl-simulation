@@ -19,12 +19,10 @@ D_GAIN = 3.0
 CONTROL_FREQ = 10          # Hz
 TIME_STEP = 32             # ms
 
-# --- Checkpoints (16 points around 2.0x2.0m loop centered at 1.5, 1.5) ---
+# --- Checkpoints (16 points around circular loop of radius 1.0 centered at 1.5, 1.5) ---
 CHECKPOINTS = [
-    (1.5, 0.5), (2.0, 0.5), (2.5, 0.5), (2.5, 1.0),
-    (2.5, 1.5), (2.5, 2.0), (2.5, 2.5), (2.0, 2.5), (1.5, 2.5),
-    (1.0, 2.5), (0.5, 2.5), (0.5, 2.0), (0.5, 1.5), (0.5, 1.0),
-    (0.5, 0.5), (1.0, 0.5)
+    (1.5 + math.cos(-math.pi / 2.0 + i * math.pi / 8.0), 1.5 + math.sin(-math.pi / 2.0 + i * math.pi / 8.0))
+    for i in range(16)
 ]
 
 # --- Observation Space Normalization Factors ---
