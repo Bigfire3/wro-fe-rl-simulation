@@ -157,6 +157,10 @@ AckermannVehicle {
   wheelbase 0.14
   minSteeringAngle -0.8
   maxSteeringAngle 0.8
+  suspensionFrontSpringConstant 500
+  suspensionFrontDampingConstant 20
+  suspensionRearSpringConstant 500
+  suspensionRearDampingConstant 20
   wheelsDampingConstant 0.01
   extensionSlot [
     Solid {
@@ -206,7 +210,7 @@ AckermannVehicle {
     density -1
     mass 1
     centerOfMass [
-      0.1 0 0.025
+      0.07 0 0.005
     ]
   }
   wheelFrontRight VehicleWheel {
