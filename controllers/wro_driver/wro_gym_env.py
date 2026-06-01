@@ -128,6 +128,7 @@ class WebotsWroEnv(gym.Env):
         self.rx = 1.5
         self.ry = 0.5
         self.ryaw = 0.0
+        self.camera_image = None
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -142,6 +143,7 @@ class WebotsWroEnv(gym.Env):
         start_x_est = self.np_random.uniform(1.2, 1.8)
         start_y_est = self.np_random.uniform(0.2, 0.8)
         yaw_est = self.np_random.uniform(-np.pi, np.pi)
+        
         
         # Convert to Webots coordinates
         x_webots = start_x_est - 1.5
@@ -209,6 +211,7 @@ class WebotsWroEnv(gym.Env):
         sensor_data, self.imu_yaw_initial = perception.read_sensors(
             self.lidar, self.imu, self.camera, self.imu_yaw_initial
         )
+        self.camera_image = sensor_data.get("camera_image")
         
         # 2. Estimation
         rx, ry, ryaw = self.estimator.update(sensor_data)
@@ -429,6 +432,15 @@ class WebotsWroEnv(gym.Env):
             p_corner=self.p_corner,
             window_name="WRO Observation Debug"
         )
+        
+        if self.camera_image is not None:
+            cam_debug = self.estimator.obstacle_mapper.render_camera(
+                self.camera_image, [self.rx, self.ry, self.ryaw]
+            )
+            try:
+                cv2.imshow("WRO Camera Debug", cam_debug)
+            except Exception:
+                pass
             
         cv2.imshow("RL Training Environment", vis_img)
         cv2.waitKey(1)
