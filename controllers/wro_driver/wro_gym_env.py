@@ -82,6 +82,12 @@ class WebotsWroEnv(gym.Env):
         self.motor_right.setVelocity(0.0)
         self.motor_left.setVelocity(0.0)
         
+        # Get actual max velocity from the motor device to dynamically scale speed limit
+        self.max_motor_vel = self.motor_left.getMaxVelocity()
+        config.MAX_MOTOR_VELOCITY = self.max_motor_vel
+        self.max_linear_velocity = self.max_motor_vel * config.WHEEL_RADIUS
+        config.NORM_FACTORS[0] = 1.0 / self.max_linear_velocity
+        
         self.steer_left = self.supervisor.getDevice("left_steer")
         self.steer_right = self.supervisor.getDevice("right_steer")
         
@@ -266,25 +272,21 @@ class WebotsWroEnv(gym.Env):
         # 4. Compute reward & check termination
         rx, ry, ryaw = self.rx, self.ry, self.ryaw
         
-        # Calculate lateral error for reward
-        best_closest, best_dist, best_tangent, best_segment_idx, best_t = geometry.get_closest_point_on_path(
-            rx, ry, self.estimator.driving_direction
-        )
-        left_normal = np.array([-best_tangent[1], best_tangent[0]])
-        p = np.array([rx, ry])
-        lateral_error = np.dot(p - best_closest, left_normal)
-        lateral_error_normalized = np.clip(lateral_error / 0.5, -1.0, 1.0)
+        # Extract normalized values directly from computed observation vector
+        speed_ratio = float(obs[0])
+        ego_v_x = speed_ratio * self.max_linear_velocity
+        lateral_error_normalized = float(obs[2])
+        heading_error_normalized = float(obs[3])
         
-        # Velocity
-        vel = self.robot_node.getVelocity()
-        if vel is not None:
-            v_g = vel[:3]
-            R = self.robot_node.getOrientation()
-            ego_v_x = float(v_g[0] * R[0] + v_g[1] * R[3] + v_g[2] * R[6]) if R is not None else 0.0
-        else:
-            ego_v_x = 0.0
-            
-        reward = ego_v_x * 1.0 - abs(lateral_error_normalized) * 0.1
+        # Reward driving fast: quadratic speed ratio with step penalty
+        speed_reward = (max(0.0, speed_ratio) ** 2) * 5.0
+        step_penalty = -0.3
+        
+        # Penalties for deviation
+        lateral_penalty = -abs(lateral_error_normalized) * 1.5
+        heading_penalty = -abs(heading_error_normalized) * 0.5
+        
+        reward = speed_reward + step_penalty + lateral_penalty + heading_penalty
         
         terminated = False
         truncated = False
@@ -301,7 +303,7 @@ class WebotsWroEnv(gym.Env):
             print(f"[Gym Env] Error checking contact points: {e}")
             
         if collision:
-            reward = -20.0
+            reward = -50.0
             terminated = True
             print("[Gym Env] COLLISION detected! Resetting.")
             
@@ -367,7 +369,7 @@ class WebotsWroEnv(gym.Env):
                         reward += 15.0
                         print(f"[Gym Env] RED Obstacle passed CORRECTLY! Reward +15.0")
                     else:
-                        reward = -20.0
+                        reward = -50.0
                         terminated = True
                         print(f"[Gym Env] RED Obstacle passed INCORRECTLY! Resetting.")
                 elif obstacle.color == "green":
@@ -376,7 +378,7 @@ class WebotsWroEnv(gym.Env):
                         reward += 15.0
                         print(f"[Gym Env] GREEN Obstacle passed CORRECTLY! Reward +15.0")
                     else:
-                        reward = -20.0
+                        reward = -50.0
                         terminated = True
                         print(f"[Gym Env] GREEN Obstacle passed INCORRECTLY! Resetting.")
                         

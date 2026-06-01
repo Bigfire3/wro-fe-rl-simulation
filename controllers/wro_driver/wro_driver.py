@@ -40,6 +40,7 @@ import warnings
 from controller import Supervisor
 
 from wro_core import config, perception, estimation, planning, control
+from wro_core.obstacle_randomizer import randomize_obstacles
 from wro_core.obs_visualizer import draw_observation_window
 
 # --- configuration ---
@@ -72,6 +73,12 @@ motor_left  = robot.getDevice("motor_rear_left")
 motor_right.setPosition(float('inf'))
 motor_left.setPosition(float('inf'))
 
+# Get actual max velocity from the motor device to dynamically scale speed limit
+max_motor_vel = motor_left.getMaxVelocity()
+config.MAX_MOTOR_VELOCITY = max_motor_vel
+max_linear_velocity = max_motor_vel * config.WHEEL_RADIUS
+config.NORM_FACTORS[0] = 1.0 / max_linear_velocity
+
 steer_left  = robot.getDevice("left_steer")
 steer_right = robot.getDevice("right_steer")
 
@@ -84,6 +91,9 @@ car_controller = control.Controller()
 imu_yaw_initial = None
 collected_scans = []
 global_obs_data = (None, None, None, None, None)
+
+# Reset obstacles
+randomize_obstacles(robot, train=False)
 
 # --- MAIN LOOP ---
 step_count = 0

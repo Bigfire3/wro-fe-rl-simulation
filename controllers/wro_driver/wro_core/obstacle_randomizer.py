@@ -19,7 +19,7 @@ def randomize_obstacles(supervisor, train=False, seed=None):
         if _cached_red_fields is None or _cached_green_fields is None:
             _cached_red_fields = []
             _cached_green_fields = []
-            for i in range(3):
+            for i in range(4):
                 node_red = supervisor.getFromDef(f"OBSTACLE_RED_{i}")
                 if node_red:
                     _cached_red_fields.append(node_red.getField("translation"))
@@ -32,7 +32,7 @@ def randomize_obstacles(supervisor, train=False, seed=None):
         # Non-cached lookup for evaluation/single-run start
         red_fields = []
         green_fields = []
-        for i in range(3):
+        for i in range(4):
             node_red = supervisor.getFromDef(f"OBSTACLE_RED_{i}")
             if node_red:
                 red_fields.append(node_red.getField("translation"))
