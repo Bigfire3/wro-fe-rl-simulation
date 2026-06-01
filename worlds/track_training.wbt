@@ -197,6 +197,10 @@ AckermannVehicle {
       translation 0.07 0 0
       name "imu"
     }
+    Accelerometer {
+      translation 0.07 0 0
+      resolution 0.1
+    }
   ]
   boundingObject Pose {
     translation 0.06 0 0.005
@@ -262,15 +266,17 @@ AckermannVehicle {
   axisDevicesRearRight [
     RotationalMotor {
       name "motor_rear_right"
-      maxVelocity 50
-      maxTorque 5
+      controlPID 1 0 0
+      maxVelocity 100
+      maxTorque 2
     }
   ]
   axisDevicesRearLeft [
     RotationalMotor {
       name "motor_rear_left"
-      maxVelocity 50
-      maxTorque 5
+      controlPID 1 0 0
+      maxVelocity 100
+      maxTorque 2
     }
   ]
 }
