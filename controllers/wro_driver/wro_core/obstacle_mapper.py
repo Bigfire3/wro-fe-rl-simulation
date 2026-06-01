@@ -232,7 +232,7 @@ class ObstacleMapper:
         rx, ry, robot_yaw = robot_pose
         
         # FOV und Brennweiten-Berechnung
-        FOV = 1.7802358
+        FOV = 2.7925268
         f_y = w_img / (2.0 * math.tan(FOV / 2.0))
         
         # alpha = robot_yaw + pi/2
@@ -276,10 +276,9 @@ class ObstacleMapper:
             v = int(h_img / 2.0 - f_y * 0.01 / x_cam)
             
             # 9. ROI-Größe bestimmen (Rechteck: höher und etwas schmaler, z. B. Breite 0.03m und Höhe 0.06m)
-            box_w = int(f_y * 0.02 / x_cam)
-            box_h = int(f_y * 0.08 / x_cam)
-            if box_w <= 0 or box_h <= 0:
-                continue
+            # Enforce minimum ROI size to prevent empty ROIs with wide-angle cameras
+            box_w = max(3, int(f_y * 0.02 / x_cam))
+            box_h = max(6, int(f_y * 0.08 / x_cam))
                 
             # ROI Boxgrenzen bestimmen
             u_min = u - box_w // 2
@@ -345,7 +344,7 @@ class ObstacleMapper:
         h_img, w_img, _ = img.shape
         rx, ry, robot_yaw = robot_pose
         
-        FOV = 1.7802358
+        FOV = 2.7925268
         f_y = w_img / (2.0 * math.tan(FOV / 2.0))
         
         alpha = robot_yaw + math.pi / 2.0
@@ -385,10 +384,9 @@ class ObstacleMapper:
             v = int(h_img / 2.0 - f_y * 0.01 / x_cam)
             
             # ROI Box-Größe (Rechteck: höher und etwas schmaler, z. B. Breite 0.03m und Höhe 0.06m)
-            box_w = int(f_y * 0.02 / x_cam)
-            box_h = int(f_y * 0.08 / x_cam)
-            if box_w <= 0 or box_h <= 0:
-                continue
+            # Enforce minimum ROI size to prevent empty ROIs with wide-angle cameras
+            box_w = max(3, int(f_y * 0.02 / x_cam))
+            box_h = max(6, int(f_y * 0.08 / x_cam))
                 
             # Sichtbarkeit prüfen
             if not self.is_fully_visible(rx, ry, obs):

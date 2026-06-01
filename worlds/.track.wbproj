@@ -8,5 +8,6 @@ centralWidgetVisible: 1
 renderingMode: PLAIN
 orthographicViewHeight: 1
 textFiles: -1
+globalOptionalRendering: CameraFrustums
 consoles: Console:All:All
-renderingDevicePerspectives: vehicle:camera;0;0.128201;0.783728;0.729611
+renderingDevicePerspectives: vehicle:camera;0;0.8;0.783728;0.729611
