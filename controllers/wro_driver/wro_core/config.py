@@ -8,8 +8,8 @@ WHEEL_RADIUS = 0.03       # m
 MAX_STEERING = 0.8        # rad
 
 # --- Limits and Speeds ---
-TARGET_SPEED_RULES = 50.0  # rad/s wheel speed (rules-based target)
-MAX_MOTOR_VELOCITY = 50.0  # rad/s max motor velocity
+TARGET_SPEED_RULES = 100.0  # rad/s wheel speed (rules-based target)
+MAX_MOTOR_VELOCITY = 100.0  # rad/s max motor velocity
 
 # --- PID configuration ---
 P_GAIN = 1.5
