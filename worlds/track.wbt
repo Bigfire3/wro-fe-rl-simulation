@@ -1,4 +1,4 @@
-#VRML_SIM R2025a utf8
+#VRML_SIM R2025b utf8
 
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/solids/protos/SolidBox.proto"
@@ -11,7 +11,7 @@ WorldInfo {
   contactProperties [
     ContactProperties {
       coulombFriction [
-        1.5
+        2
       ]
       bounce 0
       softCFM 0.0001
@@ -19,8 +19,10 @@ WorldInfo {
   ]
 }
 Viewpoint {
-  orientation 0.2698391878420586 -0.2620747084530052 -0.9265547257955197 4.641182712718807
-  position 0.3893540961065777 -6.735557771692166 4.116938933844932
+  orientation 0.24353018280270236 -0.23794558246527084 -0.9402525989591017 4.665524156246782
+  position -0.056156002298898625 -4.861964011915298 2.444793929549238
+  follow "vehicle"
+  followType "None"
 }
 Background {
   skyColor [
@@ -170,21 +172,21 @@ SolidBox {
 AckermannVehicle {
   translation -0.231441 -0.67067 0.0300003
   rotation 0 0 1 -5.307179586466759e-06
-  controller "wro_driver"
+  controller "keyboard_driver"
   supervisor TRUE
   trackFront 0.12
   trackRear 0.12
   wheelbase 0.14
   minSteeringAngle -0.8
   maxSteeringAngle 0.8
-  suspensionFrontSpringConstant 500
-  suspensionFrontDampingConstant 20
-  suspensionRearSpringConstant 500
-  suspensionRearDampingConstant 20
-  wheelsDampingConstant 0.01
+  suspensionFrontSpringConstant 1000
+  suspensionFrontDampingConstant 100
+  suspensionRearSpringConstant 1000
+  suspensionRearDampingConstant 100
+  wheelsDampingConstant 0
   extensionSlot [
     Solid {
-      translation 0.06 0 0.005
+      translation 0.06 0 -0.015
       children [
         Shape {
           appearance PBRAppearance {
@@ -193,7 +195,7 @@ AckermannVehicle {
             metalness 0.3
           }
           geometry Box {
-            size 0.18 0.06 0.005
+            size 0.18 0.04 0.005
           }
         }
       ]
@@ -219,18 +221,19 @@ AckermannVehicle {
     }
   ]
   boundingObject Pose {
-    translation 0.06 0 0.005
+    translation 0.06 0 -0.015
     children [
       Box {
-        size 0.18 0.06 0.005
+        size 0.18 0.04 0.005
       }
     ]
+    rotationStep 0.261799
   }
   physics Physics {
     density -1
-    mass 1
+    mass 0.6
     centerOfMass [
-      0.07 0 0.005
+      0.07 0 0.015
     ]
   }
   wheelFrontRight VehicleWheel {
@@ -282,17 +285,13 @@ AckermannVehicle {
   axisDevicesRearRight [
     RotationalMotor {
       name "motor_rear_right"
-      controlPID 1 0 0
-      maxVelocity 50
-      maxTorque 0.3
+      maxVelocity 100
     }
   ]
   axisDevicesRearLeft [
     RotationalMotor {
       name "motor_rear_left"
-      controlPID 1 0 0
-      maxVelocity 50
-      maxTorque 0.3
+      maxVelocity 100
     }
   ]
 }
