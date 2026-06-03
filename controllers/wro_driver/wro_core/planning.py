@@ -172,6 +172,8 @@ class RuleBasedPlanner:
 class RLPlanner:
     def __init__(self, model_path):
         self.ort_session = None
+        self.current_steering = 0.0
+        self.current_speed = 0.0
         try:
             import onnxruntime as ort
             if os.path.exists(model_path):
@@ -186,6 +188,10 @@ class RLPlanner:
     def is_ready(self):
         return self.ort_session is not None
         
+    def reset(self):
+        self.current_steering = 0.0
+        self.current_speed = 0.0
+        
     def plan(self, obs_vector):
         """
         Runs ONNX inference and returns (target_speed, target_steering).
@@ -199,10 +205,15 @@ class RLPlanner:
         
         # ONNX policy outputs (action, value, log_prob)
         action = ort_outs[0][0]
-        act_steer = np.clip(action[0], -1.0, 1.0)
-        act_speed = np.clip(action[1], 0.0, 1.0)
+        act_steer_delta = np.clip(action[0], -1.0, 1.0)
+        act_speed_delta = np.clip(action[1], -1.0, 1.0)
         
-        target_steering = act_steer * config.MAX_STEERING
-        target_speed = act_speed * config.MAX_MOTOR_VELOCITY
+        # Accumulate steering: max change 0.2 rad per step
+        self.current_steering += act_steer_delta * 0.2
+        self.current_steering = np.clip(self.current_steering, -config.MAX_STEERING, config.MAX_STEERING)
         
-        return target_speed, target_steering
+        # Accumulate speed: max change 10.0 rad/s per step
+        self.current_speed += act_speed_delta * 10.0
+        self.current_speed = np.clip(self.current_speed, 0.0, config.MAX_MOTOR_VELOCITY)
+        
+        return self.current_speed, self.current_steering

@@ -265,13 +265,13 @@ AckermannVehicle {
   axisDevicesRearRight [
     RotationalMotor {
       name "motor_rear_right"
-      maxVelocity 100
+      maxVelocity 101
     }
   ]
   axisDevicesRearLeft [
     RotationalMotor {
       name "motor_rear_left"
-      maxVelocity 100
+      maxVelocity 101
     }
   ]
 }
