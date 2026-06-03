@@ -17,5 +17,5 @@ ENV/
 Thumbs.db
 
 # ML / Tensorboard / Models
-models/
+temp/
 tb_logs/
