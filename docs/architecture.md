@@ -18,7 +18,10 @@ Die Zustandslogik (State Machine) ist dabei vollständig in **STAGE 3: PLANNING*
   * *Einschränkung:* Dies ist der **einzige** Ort, an dem Zustandsübergänge und verhaltenssteuernde Entscheidungen getroffen werden.
   
 * **[ STAGE 4: CONTROL ]** (Regelung)
-  * *Verantwortung:* Berechnung der konkreten Stellgrößen für die Aktuatoren (Ackermann-Lenkgeometrie für die Servomotoren, PID-Regler für die Radgeschwindigkeiten) basierend auf den Vorgaben aus Stage 3.
+  * *Verantwortung:* Berechnung der konkreten Stellgrößen für die Aktuatoren (Ackermann-Lenkgeometrie für die Servomotoren, Soll-Geschwindigkeiten für die Antriebsmotoren) basierend auf den Vorgaben aus Stage 3.
+  * *Features:*
+    * **Elektronisches Differenzial**: Berechnet unterschiedliche Sollgeschwindigkeiten für das linke und rechte Hinterrad basierend auf dem aktuellen Lenkwinkel (kurveninneres Rad fährt langsamer, kurvenäußeres Rad schneller).
+    * **Direkte Ansteuerung**: Verzicht auf Tiefpassfilter für maximale Reaktionsfähigkeit.
   * *Einschränkung:* Diese Stufe arbeitet rein zustandsunabhängig und führt lediglich mathematische Regelungsberechnungen und Sicherheitsbegrenzungen (Clamping) durch.
 
 ---
@@ -54,8 +57,8 @@ Die Codebasis verwendet ein strikt positives globales Koordinatensystem für die
 * **`calibrate_initial_pose(avg_ranges, angle_offset, angle_inc)`**: Bestimmt die Anfangspose im Startkorridor mittels Template Matching und leitet die Fahrtrichtung (`CW`/`CCW`) ab.
 
 ### 3.2. `TranslationICPLocalizer` (`trans_icp_localizer.py`)
-* **`update(lidar_ranges, imu_yaw)`**: Berechnet die Pose `(x, y, yaw)` über 3 Iterationen Translation-Only ICP und gibt LiDAR-Ausreißer (Wandabstand $\ge 15\,\text{cm}$) zurück.
-* **`render()`**: Erzeugt das Debug-Bild mit LiDAR-Punkten (Inlier=grün, Outlier=rot), Trajektorienverlauf (orange) und Roboterpose.
+* **`update(lidar_ranges, imu_yaw, max_range=2.0, ego_v_x=0.0)`**: Berechnet die Pose `(x, y, yaw)` über 3 Iterationen Translation-Only ICP und gibt LiDAR-Ausreißer (Wandabstand $\ge 15\,\text{cm}$) zurück. Zeichnet den Trajektorienverlauf auf.
+* **`render()`**: Erzeugt das Debug-Bild mit LiDAR-Punkten (Inlier=grün, Outlier=rot) und Roboterpose. Der Trajektorienverlauf wird **geschwindigkeitsabhängig eingefärbt** (von Cyan/Blau für langsam über Grün zu Orange/Rot für Höchstgeschwindigkeiten bis 1.6 m/s) inklusive einer eingeblendeten Farblegende.
 
 ### 3.3. `ObstacleMapper` (`obstacle_mapper.py`)
 * **`update(robot_pose, outlier_points)`**: Clustert Outliers (Schwelle $10\,\text{cm}$, Rauschfilter $\ge 2$ Punkte), gleicht sie mit Hindernissen ($50\,\text{mm}$ Boxen) ab und passt die Position (mittels Tiefpassfilter $\alpha = 0.1$) sowie die Confidence (+0.01) an. Verringert die Confidence (-0.01) bei Nicht-Erkennung nur im freien Sichtfeld (Radius $< 2.0\,\text{m}$, Sichtachse nicht durch Wände oder andere Hindernisse verdeckt).
@@ -63,11 +66,14 @@ Die Codebasis verwendet ein strikt positives globales Koordinatensystem für die
 
 ---
 
-## 4. Modulspezifikation: Planung (Hierarchische State Machine)
+## 4. Modulspezifikation: Planung (Stage 3)
 
-Die Verhaltenssteuerung des Roboters wird über eine Hierarchische State Machine (HSM) realisiert, die in **STAGE 3: PLANNING** ausgeführt wird. Sie trennt strikt den globalen System-Lebenszyklus von den eigentlichen Fahr-Zuständen.
+Die Verhaltenssteuerung des Roboters wird über Pfadplaner realisiert, die in **STAGE 3: PLANNING** ausgeführt werden. Der Controller unterstützt zwei Modi:
 
-Die vollständige Spezifikation der Zustandsmaschine, einschließlich der Hierarchie, aller Zustandsbeschreibungen (Zweck, Ein-/Ausgänge, Austrittsbedingungen), der Übergangstabelle und des Zustandsdiagramms befindet sich in der separaten Datei [state_machine.md](file:///c:/Users/fabia/Documents/WRO_FE_SIM/docs/state_machine.md).
+* **Rule-based (Klassisch)**: Nutzt den `RuleBasedPlanner` (PD-Regler zur Wandfolgung und Zentrierung sowie Seitenwandschutz).
+* **Reinforcement Learning (RL)**: Nutzt den `RLPlanner` zur Auswertung eines ONNX-Modells (`wro_model.onnx` via `onnxruntime`). Verwendet eine **inkrementelle Aktionssteuerung** (Steering und Speed werden über diskrete Inkremente angepasst und auf Grenzwerte limitiert).
+
+Die vollständige Spezifikation der übergeordneten Zustandsmaschine (System-Lebenszyklus), einschließlich der Hierarchie, aller Zustandsbeschreibungen, der Übergangstabelle und des Zustandsdiagramms befindet sich in der separaten Datei [state_machine.md](file:///c:/Users/fabia/Documents/WRO_FE_SIM/docs/state_machine.md).
 
 ---
 
