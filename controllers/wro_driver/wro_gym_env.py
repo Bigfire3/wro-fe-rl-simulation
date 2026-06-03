@@ -283,8 +283,7 @@ class WebotsWroEnv(gym.Env):
             motor_left=self.motor_left,
             motor_right=self.motor_right,
             steer_left=self.steer_left,
-            steer_right=self.steer_right,
-            use_rl=True
+            steer_right=self.steer_right
         )
         
         # Step simulation physics

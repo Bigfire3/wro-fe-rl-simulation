@@ -3,7 +3,7 @@ WRO Future Engineers – Webots Controller
 =========================================
 - Stage 1: Perception
 - Stage 2: Estimation
-- Stage 3: Planning (Rule-based / RL)
+- Stage 3: Planning (RL)
 - Stage 4: Control
 """
 
@@ -43,16 +43,12 @@ from wro_core import config, perception, estimation, planning, control
 from wro_core.obstacle_randomizer import randomize_obstacles
 from wro_core.obs_visualizer import draw_observation_window
 
-# --- configuration ---
-USE_RL = True             # Enable Reinforcement Learning navigation
-
 # --- Load ONNX Model ---
 model_path = os.path.join(project_root, "models", "wro_model.onnx")
 
 rl_planner = planning.RLPlanner(model_path)
-if USE_RL and not rl_planner.is_ready():
-    print("[RL Warning] Falling back to Rules-based planning.")
-    USE_RL = False
+if not rl_planner.is_ready():
+    raise RuntimeError(f"ONNX model could not be loaded from {model_path}. RL Planner is not ready.")
 
 # --- initialise robot ---
 robot = Supervisor()
@@ -84,7 +80,6 @@ steer_right = robot.getDevice("right_steer")
 
 # --- Initialize estimators and controller ---
 estimator = estimation.StateEstimator()
-rules_planner = planning.RuleBasedPlanner()
 car_controller = control.Controller()
 
 # --- State variables ---
@@ -178,15 +173,7 @@ while robot.step(config.TIME_STEP) != -1:
     raw_obs, obs_vector, best_closest, p_40, p_80, p_150, p_corner = global_obs_data
     
     # --- 3. STAGE 3: PLANNING ---
-    if USE_RL:
-        try:
-            target_speed, target_steering = rl_planner.plan(obs_vector)
-        except Exception as e:
-            print(f"[RL Error] Inference failed: {e}. Falling back to Rules-based.")
-            USE_RL = False
-            target_speed, target_steering = rules_planner.plan(sensor_data["lidar_ranges"])
-    else:
-        target_speed, target_steering = rules_planner.plan(sensor_data["lidar_ranges"])
+    target_speed, target_steering = rl_planner.plan(obs_vector)
         
     # --- 4. STAGE 4: CONTROL ---
     actual_speed, actual_steering = car_controller.apply(
@@ -195,8 +182,7 @@ while robot.step(config.TIME_STEP) != -1:
         motor_left=motor_left,
         motor_right=motor_right,
         steer_left=steer_left,
-        steer_right=steer_right,
-        use_rl=USE_RL
+        steer_right=steer_right
     )
     
     # --- Live OpenCV Visualisierung ---
@@ -205,8 +191,8 @@ while robot.step(config.TIME_STEP) != -1:
         vis_img = estimator.obstacle_mapper.render(vis_img, robot_pose, estimator.icp_localizer.scale, estimator.icp_localizer.window_size)
         
         # Overlay mode indicator text
-        mode_text = "Planning: RL (ONNX)" if USE_RL else "Planning: Rules-based"
-        text_color = (0, 255, 0) if USE_RL else (0, 165, 255)
+        mode_text = "Planning: RL (ONNX)"
+        text_color = (0, 255, 0)
         cv2.putText(
             vis_img,
             mode_text,

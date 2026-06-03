@@ -8,12 +8,7 @@ WHEEL_RADIUS = 0.03       # m
 MAX_STEERING = 0.8        # rad
 
 # --- Limits and Speeds ---
-TARGET_SPEED_RULES = 100.0  # rad/s wheel speed (rules-based target)
 MAX_MOTOR_VELOCITY = 100.0  # rad/s max motor velocity
-
-# --- PID configuration ---
-P_GAIN = 1.5
-D_GAIN = 3.0
 
 # --- Training / Gym Environment configuration ---
 CONTROL_FREQ = 10          # Hz

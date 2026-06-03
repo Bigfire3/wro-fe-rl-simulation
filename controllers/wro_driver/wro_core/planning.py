@@ -113,61 +113,6 @@ def compute_observation_vector(pose, obstacles, driving_direction, smoothed_stee
     
     return raw_obs, obs_vector, best_closest, p_40, p_80, p_150, corner_global
 
-class RuleBasedPlanner:
-    def __init__(self):
-        self.prev_error = 0.0
-        
-    def reset(self):
-        self.prev_error = 0.0
-        
-    def plan(self, lidar_data):
-        """
-        Executes rules-based path planning.
-        Returns target_speed, target_steering.
-        """
-        if len(lidar_data) == 0:
-            return 0.0, 0.0
-            
-        target_speed = config.TARGET_SPEED_RULES
-        
-        def cap(dist):
-            return min(dist, 1.5)
-            
-        # Distances: 90=Left, 270=Right, 180=Front, 135=Front-Left, 225=Front-Right
-        right_dist = cap(lidar_data[270])
-        left_dist = cap(lidar_data[90])
-        front_dist = lidar_data[180]
-        front_right_dist = cap(lidar_data[225])
-        front_left_dist = cap(lidar_data[135])
-        
-        # 1. centering & parallel driving (PD controller)
-        current_diff = left_dist - right_dist
-        derivative = current_diff - self.prev_error
-        self.prev_error = current_diff
-        
-        raw_steering = -(config.P_GAIN * current_diff + config.D_GAIN * derivative)
-        
-        # 2. sidewall protection (safety margin 20cm)
-        min_side = min(left_dist, right_dist)
-        if min_side < 0.2:
-            safety_force = (0.2 - min_side) * 5.0
-            if left_dist < right_dist:
-                raw_steering += safety_force  # steer right
-            else:
-                raw_steering -= safety_force  # steer left
-                
-        # 3. curves / front wall avoidance
-        if front_dist < 1.0:
-            corner_force = (1.0 - front_dist)**2
-            CORNER_GAIN = 8.0
-            
-            if front_left_dist > front_right_dist:
-                raw_steering -= (corner_force * CORNER_GAIN)   # steer left
-            else:
-                raw_steering += (corner_force * CORNER_GAIN)   # steer right
-                
-        target_steering = np.clip(raw_steering, -config.MAX_STEERING, config.MAX_STEERING)
-        return target_speed, target_steering
 
 class RLPlanner:
     def __init__(self, model_path):

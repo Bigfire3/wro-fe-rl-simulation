@@ -25,9 +25,9 @@ class Controller:
         self.smoothed_steering = 0.0
         self.smoothed_speed = 0.0
         
-    def apply(self, target_speed, target_steering, motor_left, motor_right, steer_left, steer_right, use_rl=True):
+    def apply(self, target_speed, target_steering, motor_left, motor_right, steer_left, steer_right):
         """
-        Processes target steering and speed targets using low-pass filtering,
+        Processes target steering and speed targets,
         converts target steering into Ackermann steer angles, and applies 
         the controls to the Webots devices.
         
@@ -38,12 +38,7 @@ class Controller:
         self.smoothed_steering = target_steering
         self.smoothed_speed = target_speed
 
-        if use_rl:
-            speed = target_speed
-        else:
-            # Speed scaling based on steering angle
-            speed_factor = 1.0 - (abs(self.smoothed_steering) / config.MAX_STEERING) * 0.3
-            speed = target_speed * max(0.7, speed_factor)
+        speed = target_speed
             
         # Electronic differential for rear wheels
         # If turning right (smoothed_steering > 0), the right wheel is inner (slower) and left is outer (faster).

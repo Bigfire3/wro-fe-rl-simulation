@@ -4,16 +4,16 @@ This repository contains the Webots simulation for the WRO Future Engineers cate
 
 ## Project Structure
 
-- `controllers/wro_driver/`: Main autonomous robot controller (supporting Rule-based and RL modes).
+- `controllers/wro_driver/`: Main autonomous robot controller (RL inference).
 - `controllers/keyboard_driver/`: Keyboard controller for manual driving and testing.
 - `worlds/`: Webots world files (`track.wbt` for evaluation, `track_training.wbt` for RL training).
 - `protos/`: Custom robot and object prototypes.
-- `docs/`: In-depth documentation of system architecture, state machine, and rules.
+- `docs/`: In-depth documentation of system architecture and rules.
 - `models/`: Trained ONNX models (`wro_model.onnx`).
 
 ## Features
 
-- **Multi-Mode Navigation**: Supports both classic **Rule-based** path planning (PD control with obstacle avoidance) and **Reinforcement Learning (RL)** (ONNX inference with incremental action control).
+- **Reinforcement Learning Navigation**: Supports **Reinforcement Learning (RL)** (ONNX inference with incremental action control) for robot path planning.
 - **Translation-Only ICP**: Scan-to-map matching via 3-iteration ICP with outlier classification.
 - **Dynamic Obstacle Mapping**: Clustering-based obstacle mapper with visibility-based decay and confidence visualization.
 - **Electronic Differential**: Rear-wheel velocity adjustment based on steering angle for realistic turning.

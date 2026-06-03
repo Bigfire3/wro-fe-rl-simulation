@@ -4,7 +4,7 @@
 
 Um eine saubere Code-Trennung zu gewährleisten und Best Practices der Embedded-Software-Entwicklung einzuhalten, MUSS die Regelschleife des Roboters in jedem Frame sequenziell über 4 klar abgegrenzte Stufen ausgeführt werden. 
 
-Die Zustandslogik (State Machine) ist dabei vollständig in **STAGE 3: PLANNING** gekapselt. Die Stufen 1, 2 und 4 enthalten keine State-Machine-Zustandsübergänge (wobei Stage 2 beim Start die einmalige Kalibrierung zur Pose- und Richtungsschätzung übernimmt).
+Die Planungslogik ist dabei vollständig in **STAGE 3: PLANNING** gekapselt. Die Stufen 1, 2 und 4 enthalten keine Planungsentscheidungen (wobei Stage 2 beim Start die einmalige Kalibrierung zur Pose- und Richtungsschätzung übernimmt).
 
 * **[ STAGE 1: PERCEPTION ]** (Wahrnehmung)
   * *Verantwortung:* Einlesen der Rohdaten von den Sensoren (LiDAR-Distanzen, IMU-Werte, Kamerabild) und Anwendung grundlegender Filter (z. B. zur Entfernung von Ausreißern).
@@ -13,9 +13,8 @@ Die Zustandslogik (State Machine) ist dabei vollständig in **STAGE 3: PLANNING*
 * **[ STAGE 2: ESTIMATION ]** (Zustandsschätzung)
   * *Verantwortung:* Berechnung der Roboterpose `(x, y, yaw)` durch geometrischen Abgleich (Template-Matching zur Kalibrierung, Translation-Only ICP zum kontinuierlichen Tracking). Klassifiziert LiDAR-Ausreißer und führt ein dynamisches Hindernis-Mapping (Obstacle Mapping) durch.
   
-* **[ STAGE 3: PLANNING ]** (Pfadplanung & State Machine)
-  * *Verantwortung:* Ausführung der übergeordneten hierarchischen State Machine (HSM), d.h. Steuerung des System-Lebenszyklus (`STOP` -> `RUNNING` -> `COMPLETED`/`ERROR`) und der Fahr-Verhaltensweisen sowie Generierung der Soll-Trajektorie (Geschwindigkeits- und Lenkwinkelvorgaben).
-  * *Einschränkung:* Dies ist der **einzige** Ort, an dem Zustandsübergänge und verhaltenssteuernde Entscheidungen getroffen werden.
+* **[ STAGE 3: PLANNING ]** (Pfadplanung)
+  * *Verantwortung:* Generierung der Soll-Trajektorie (Geschwindigkeits- und Lenkwinkelvorgaben) aus der Reinforcement-Learning-Inferenz.
   
 * **[ STAGE 4: CONTROL ]** (Regelung)
   * *Verantwortung:* Berechnung der konkreten Stellgrößen für die Aktuatoren (Ackermann-Lenkgeometrie für die Servomotoren, Soll-Geschwindigkeiten für die Antriebsmotoren) basierend auf den Vorgaben aus Stage 3.
@@ -68,12 +67,9 @@ Die Codebasis verwendet ein strikt positives globales Koordinatensystem für die
 
 ## 4. Modulspezifikation: Planung (Stage 3)
 
-Die Verhaltenssteuerung des Roboters wird über Pfadplaner realisiert, die in **STAGE 3: PLANNING** ausgeführt werden. Der Controller unterstützt zwei Modi:
+Die Verhaltenssteuerung des Roboters wird über Pfadplaner realisiert, die in **STAGE 3: PLANNING** ausgeführt werden. Der Controller nutzt:
 
-* **Rule-based (Klassisch)**: Nutzt den `RuleBasedPlanner` (PD-Regler zur Wandfolgung und Zentrierung sowie Seitenwandschutz).
 * **Reinforcement Learning (RL)**: Nutzt den `RLPlanner` zur Auswertung eines ONNX-Modells (`wro_model.onnx` via `onnxruntime`). Verwendet eine **inkrementelle Aktionssteuerung** (Steering und Speed werden über diskrete Inkremente angepasst und auf Grenzwerte limitiert).
-
-Die vollständige Spezifikation der übergeordneten Zustandsmaschine (System-Lebenszyklus), einschließlich der Hierarchie, aller Zustandsbeschreibungen, der Übergangstabelle und des Zustandsdiagramms befindet sich in der separaten Datei [state_machine.md](file:///c:/Users/fabia/Documents/WRO_FE_SIM/docs/state_machine.md).
 
 ---
 
@@ -86,7 +82,7 @@ graph TD
     Start([Start des Steuerungsprogramms]) --> Step[Frame-Schritt: robot.step]
     Step --> Stage1[STAGE 1: PERCEPTION<br/>- Rohdaten einlesen<br/>- Ausreißer filtern]
     Stage1 --> Stage2[STAGE 2: ESTIMATION<br/>- Pose schätzen / kalibrieren]
-    Stage2 --> Stage3[STAGE 3: PLANNING<br/>- HSM-Zustand updaten<br/>- Trajektorie berechnen]
+    Stage2 --> Stage3[STAGE 3: PLANNING<br/>- Trajektorie berechnen]
     Stage3 --> Stage4[STAGE 4: CONTROL<br/>- Ackermann-Winkel berechnen<br/>- Motordrehzahl regeln]
     Stage4 --> Check{Simulation aktiv?}
     Check -- Ja --> Step

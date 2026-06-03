@@ -141,8 +141,7 @@ def main():
             motor_left=motor_left,
             motor_right=motor_right,
             steer_left=steer_left,
-            steer_right=steer_right,
-            use_rl=True # Bypass speed scaling in rules mode so we get exact speed set by keyboard
+            steer_right=steer_right
         )
 
 if __name__ == "__main__":
