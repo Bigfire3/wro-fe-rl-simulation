@@ -48,10 +48,10 @@ class WebotsWroEnv(gym.Env):
         
         # Action space:
         # Output 2 floats:
-        # - Dim 0: target_steering_offset in [-1.0, 1.0] (scaled to [-MAX_STEERING, MAX_STEERING])
-        # - Dim 1: throttle/speed in [0.0, 1.0] (scaled to [0.0, max_motor_velocity])
+        # - Dim 0: steering delta in [-1.0, 1.0] (scaled to [-0.2, 0.2] rad)
+        # - Dim 1: speed delta in [-1.0, 1.0] (scaled to [-10.0, 10.0] rad/s)
         self.action_space = spaces.Box(
-            low=np.array([-1.0, 0.0], dtype=np.float32), high=np.array([1.0, 1.0], dtype=np.float32), shape=(2,), dtype=np.float32
+            low=np.array([-1.0, -1.0], dtype=np.float32), high=np.array([1.0, 1.0], dtype=np.float32), shape=(2,), dtype=np.float32
         )
         
         # Observation space (15 elements, normalized to [-1.0, 1.0]):
@@ -114,7 +114,9 @@ class WebotsWroEnv(gym.Env):
         self.curriculum_stage = 1
         self.prev_path_s = 0.0
         self.current_path_s = 0.0
-        self.prev_steer_action = 0.0
+        self.current_steering = 0.0
+        self.current_speed = 0.0
+        self.prev_steer_delta_action = 0.0
         self.cumulative_progress = 0.0
         
         # Variables stored for visualization/rendering
@@ -207,7 +209,9 @@ class WebotsWroEnv(gym.Env):
             
         self.passed_obstacle_ids = set()
         self.stagnation_counter = 0
-        self.prev_steer_action = 0.0
+        self.current_steering = 0.0
+        self.current_speed = 0.0
+        self.prev_steer_delta_action = 0.0
         self.cumulative_progress = 0.0
         self.total_steps = 0
         
@@ -222,9 +226,6 @@ class WebotsWroEnv(gym.Env):
         )
         self.camera_image = sensor_data.get("camera_image")
         
-        # 2. Estimation
-        rx, ry, ryaw = self.estimator.update(sensor_data)
-        
         # Get velocity
         vel = self.robot_node.getVelocity()
         if vel is not None:
@@ -234,6 +235,11 @@ class WebotsWroEnv(gym.Env):
         else:
             ego_v_x = 0.0
             
+        sensor_data["ego_v_x"] = ego_v_x
+        
+        # 2. Estimation
+        rx, ry, ryaw = self.estimator.update(sensor_data)
+        
         # 3. Planning (observation computation)
         self.raw_obs, self.obs_vector, self.best_closest, self.p_40, self.p_80, self.p_150, self.p_corner = planning.compute_observation_vector(
             pose=(rx, ry, ryaw),
@@ -254,14 +260,21 @@ class WebotsWroEnv(gym.Env):
         return self.obs_vector
 
     def step(self, action):
-        # 1. Apply action
-        target_steering = float(action[0]) * config.MAX_STEERING
+        # 1. Apply action (accumulate delta steering and speed)
+        # Steering delta: action[0] in [-1.0, 1.0], mapped to [-0.2, 0.2] rad
+        self.current_steering += float(action[0]) * 0.2
+        self.current_steering = np.clip(self.current_steering, -config.MAX_STEERING, config.MAX_STEERING)
+        target_steering = self.current_steering
+        
         if self.curriculum_stage == 1:
-            # Stage 1: fixed target speed (30% of max motor velocity, i.e., 3.0 rad/s)
+            # Stage 1: fixed target speed (30% of max motor velocity, i.e., 30.0 rad/s)
             target_speed = 0.3 * config.MAX_MOTOR_VELOCITY
+            self.current_speed = target_speed
         else:
-            # Stage 2: variable speed control
-            target_speed = float(action[1]) * config.MAX_MOTOR_VELOCITY
+            # Stage 2: variable speed control delta: action[1] in [-1.0, 1.0], mapped to [-10.0, 10.0] rad/s
+            self.current_speed += float(action[1]) * 10.0
+            self.current_speed = np.clip(self.current_speed, 0.0, config.MAX_MOTOR_VELOCITY)
+            target_speed = self.current_speed
         
         # 4. Control
         self.car_controller.apply(
@@ -294,10 +307,14 @@ class WebotsWroEnv(gym.Env):
         # Step penalty
         step_penalty = -0.3
         
-        # Smoothness penalty
-        steer_diff = float(action[0]) - self.prev_steer_action
-        self.prev_steer_action = float(action[0])
-        smoothness_penalty = -0.15 * (steer_diff ** 2)
+        # Smoothness penalty (penalize steering acceleration)
+        steer_delta_diff = float(action[0]) - self.prev_steer_delta_action
+        self.prev_steer_delta_action = float(action[0])
+        smoothness_penalty = -0.15 * (steer_delta_diff ** 2)
+        
+        # Steering amplitude penalty (penalize excessive steering based on absolute steering angle)
+        norm_steering = self.current_steering / config.MAX_STEERING
+        action_steer_penalty = -0.5 * abs(norm_steering) * max(0.0, speed_ratio)
         
         # Compute progress s diff
         total_len = 4.0 + math.pi
@@ -317,7 +334,7 @@ class WebotsWroEnv(gym.Env):
             heading_penalty = -abs(heading_error_normalized) * 0.5
             speed_reward = (max(0.0, speed_ratio) ** 2) * 5.0
             
-            reward = speed_reward + step_penalty + lateral_penalty + heading_penalty + smoothness_penalty
+            reward = speed_reward + step_penalty + lateral_penalty + heading_penalty + smoothness_penalty + action_steer_penalty
         else:
             # Stage 2: Performance focus (progress-based reward, relaxed lateral penalty)
             progress_reward = diff_s * 15.0
@@ -329,7 +346,6 @@ class WebotsWroEnv(gym.Env):
                 lateral_penalty = -3.0 * ((lat_err_abs - 0.5) ** 2)
                 
             heading_penalty = 0.0
-            action_steer_penalty = -0.5 * abs(float(action[0])) * max(0.0, speed_ratio)
             
             reward = progress_reward + step_penalty + lateral_penalty + heading_penalty + smoothness_penalty + action_steer_penalty
         

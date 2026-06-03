@@ -3,6 +3,31 @@ import os
 import numpy as np
 import cv2
 
+def get_speed_color(speed):
+    # Map speed to color. Max speed is scaled to 1.6 m/s
+    max_speed = 1.6
+    norm_speed = np.clip(speed / max_speed, 0.0, 1.0)
+    
+    # Key colors in BGR:
+    # 0.0 -> Low speed: Cyan-Blue (255, 100, 0)
+    # 0.8 -> Mid speed: Spring Green (0, 255, 150)
+    # 1.6 -> High speed: Vibrant Red/Orange (0, 50, 255)
+    
+    if norm_speed < 0.5:
+        # Interpolate between Low and Mid
+        t = norm_speed / 0.5
+        b = int(255 * (1.0 - t) + 0 * t)
+        g = int(100 * (1.0 - t) + 255 * t)
+        r = int(0 * (1.0 - t) + 150 * t)
+    else:
+        # Interpolate between Mid and High
+        t = (norm_speed - 0.5) / 0.5
+        b = int(0 * (1.0 - t) + 0 * t)
+        g = int(255 * (1.0 - t) + 50 * t)
+        r = int(150 * (1.0 - t) + 255 * t)
+        
+    return (b, g, r)
+
 class TranslationICPLocalizer:
     def __init__(self):
         # Initial-Pose
@@ -67,9 +92,9 @@ class TranslationICPLocalizer:
         self.yaw_real = yaw
         # IMU ist genullt (startet bei 0), daher: world_yaw = yaw_init + imu_yaw
         self.imu_to_world_offset = yaw
-        self.trajectory_history = [(x, y)]
+        self.trajectory_history = [(x, y, 0.0)]
 
-    def update(self, lidar_ranges, imu_yaw, max_range=2.0):
+    def update(self, lidar_ranges, imu_yaw, max_range=2.0, ego_v_x=0.0):
         """
         Aktualisiert die geschätzte Translation (X_real, Y_real) über 3 ICP-Iterationen.
         Der absolute Winkel wird aus dem IMU-Yaw und dem gespeicherten Offset berechnet.
@@ -179,12 +204,13 @@ class TranslationICPLocalizer:
 
         # Fahrspur aktualisieren
         if len(self.trajectory_history) == 0:
-            self.trajectory_history.append((self.X_real, self.Y_real))
+            self.trajectory_history.append((self.X_real, self.Y_real, ego_v_x))
         else:
-            last_x, last_y = self.trajectory_history[-1]
+            last_point = self.trajectory_history[-1]
+            last_x, last_y = last_point[0], last_point[1]
             dist = math.hypot(self.X_real - last_x, self.Y_real - last_y)
             if dist > 0.02:
-                self.trajectory_history.append((self.X_real, self.Y_real))
+                self.trajectory_history.append((self.X_real, self.Y_real, ego_v_x))
                 if len(self.trajectory_history) > 5000:
                     self.trajectory_history.pop(0)
 
@@ -208,14 +234,36 @@ class TranslationICPLocalizer:
 
         # 1.5. Fahrspur (Trajektorie) zeichnen
         if len(self.trajectory_history) > 1:
-            pts = []
-            for tx, ty in self.trajectory_history:
-                tx_px = int(tx * self.scale)
-                ty_px = int(self.window_size - ty * self.scale)
-                pts.append([tx_px, ty_px])
-            pts = np.array(pts, dtype=np.int32)
-            # Orange-farbene Spur mit Anti-Aliasing (dünnere Linie)
-            cv2.polylines(img, [pts], isClosed=False, color=(0, 140, 255), thickness=1, lineType=cv2.LINE_AA)
+            for i in range(len(self.trajectory_history) - 1):
+                p1 = self.trajectory_history[i]
+                p2 = self.trajectory_history[i+1]
+                
+                tx1, ty1 = p1[0], p1[1]
+                tx2, ty2 = p2[0], p2[1]
+                speed = p2[2] if len(p2) > 2 else 0.0
+                
+                p1_px = (int(tx1 * self.scale), int(self.window_size - ty1 * self.scale))
+                p2_px = (int(tx2 * self.scale), int(self.window_size - ty2 * self.scale))
+                
+                color = get_speed_color(speed)
+                cv2.line(img, p1_px, p2_px, color, thickness=2, lineType=cv2.LINE_AA)
+
+        # 1.6. Geschwindigkeits-Legende zeichnen (oben rechts)
+        # Hintergrund-Box
+        cv2.rectangle(img, (445, 15), (585, 65), (35, 35, 35), -1)
+        cv2.rectangle(img, (445, 15), (585, 65), (80, 80, 80), 1, lineType=cv2.LINE_AA)
+        
+        # Colorbar Gradient zeichnen
+        for px in range(455, 575):
+            t = (px - 455) / 120.0
+            speed_val = t * 1.6
+            col = get_speed_color(speed_val)
+            cv2.line(img, (px, 40), (px, 48), col, 1)
+            
+        # Text-Labels zeichnen
+        cv2.putText(img, "Speed", (495, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (220, 220, 220), 1, cv2.LINE_AA)
+        cv2.putText(img, "0", (455, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (180, 180, 180), 1, cv2.LINE_AA)
+        cv2.putText(img, "1.6 m/s", (540, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (180, 180, 180), 1, cv2.LINE_AA)
 
         # 2. Roboter-Position zeichnen
         rx_px = int(self.X_real * self.scale)

@@ -86,12 +86,14 @@ class StateEstimator:
             
         lidar_ranges = sensor_data["lidar_ranges"]
         imu_yaw = sensor_data["imu_yaw"]
+        ego_v_x = sensor_data.get("ego_v_x", 0.0)
         
         # Continuous ICP update
         rx, ry, ryaw, outliers = self.icp_localizer.update(
             lidar_ranges=lidar_ranges,
             imu_yaw=imu_yaw,
-            max_range=2.0
+            max_range=2.0,
+            ego_v_x=ego_v_x
         )
         
         # Update obstacle mapper

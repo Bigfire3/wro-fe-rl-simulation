@@ -150,9 +150,6 @@ while robot.step(config.TIME_STEP) != -1:
             motor_left.setVelocity(0.0)
             continue
 
-    # Calibration is completed, proceed with standard control loop
-    robot_pose = estimator.update(sensor_data)
-    
     # Get ego velocity directly from Webots physics
     vel = robot_node.getVelocity()
     if vel is not None:
@@ -166,6 +163,11 @@ while robot.step(config.TIME_STEP) != -1:
     else:
         ego_v_x = 0.0
         
+    sensor_data["ego_v_x"] = ego_v_x
+
+    # Calibration is completed, proceed with standard control loop
+    robot_pose = estimator.update(sensor_data)
+    
     global_obs_data = planning.compute_observation_vector(
         pose=robot_pose,
         obstacles=estimator.obstacle_mapper.obstacles,
