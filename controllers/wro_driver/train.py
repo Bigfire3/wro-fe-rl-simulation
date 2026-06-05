@@ -14,15 +14,19 @@ class TrainingAbortException(Exception):
     pass
 
 class RenderCallback(BaseCallback):
-    def __init__(self, render_training=True, verbose=0):
+    def __init__(self, render_training=True, forced_stage=None, verbose=0):
         super(RenderCallback, self).__init__(verbose)
         self.render_training = render_training
+        self.forced_stage = forced_stage
 
     def _on_step(self) -> bool:
         # Check global step count to update curriculum stage (Transition at 200,000 steps)
-        stage = 1
-        if self.num_timesteps >= 200000:
-            stage = 2
+        if self.forced_stage is not None:
+            stage = self.forced_stage
+        else:
+            stage = 1
+            if self.num_timesteps >= 200000:
+                stage = 2
             
         try:
             self.training_env.env_method("set_curriculum_stage", stage)
@@ -49,6 +53,8 @@ def main():
     parser = argparse.ArgumentParser(description="WRO Reinforcement Learning Training")
     parser.add_argument("--timesteps", type=int, default=500000, help="Total training timesteps")
     parser.add_argument("--no-render", action="store_true", help="Disable OpenCV rendering during training")
+    parser.add_argument("--continue-training", "-c", action="store_true", help="Continue training the existing model if it exists")
+    parser.add_argument("--stage", type=int, choices=[1, 2], default=None, help="Force curriculum stage (1 or 2). If not specified, standard automatic curriculum is used.")
     args = parser.parse_args()
 
     render_training = not args.no_render
@@ -64,10 +70,14 @@ def main():
     print("=" * 60)
     print(f"Rendering: {render_training}")
     print(f"Total Timesteps: {args.timesteps}")
+    print(f"Continue Training: {args.continue_training}")
+    print(f"Forced Curriculum Stage: {args.stage if args.stage is not None else 'Auto'}")
     print("-" * 60)
     
     # Instantiate environment
     env = WebotsWroEnv()
+    if args.stage is not None:
+        env.set_curriculum_stage(args.stage)
     
     # Check if tensorboard is installed
     tb_log = "./tb_logs/"
@@ -77,25 +87,48 @@ def main():
         print("[Warning] TensorBoard ist nicht installiert. Training wird ohne TensorBoard-Logging fortgesetzt.")
         tb_log = None
         
-    # Create PPO model
-    model = PPO(
-        "MlpPolicy",
-        env,
-        learning_rate=2e-4,
-        n_steps=2048,
-        batch_size=128,
-        n_epochs=10,
-        gamma=0.98,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.01,
-        verbose=1,
-        tensorboard_log=tb_log,
-        policy_kwargs=dict(net_arch=[64, 64])
-    )
+    # Check if we should load the existing model
+    model_zip_path = model_save_path + ".zip"
+    if args.continue_training and os.path.exists(model_zip_path):
+        print(f"Lade bereits vorhandenes Modell für das Weitertraining: {model_zip_path}")
+        # Overwrite hyperparameters to force exploration under new reward settings
+        model = PPO.load(
+            model_save_path,
+            env=env,
+            tensorboard_log=tb_log,
+            ent_coef=0.02,        # Moderate entropy boost for re-exploration (was 0.08 – too aggressive)
+            learning_rate=3e-4
+        )
+        # Reset exploration noise with moderate standard deviation
+        import torch
+        with torch.no_grad():
+            model.policy.log_std.fill_(-1.0)  # Reset std to exp(-1.0) ≈ 0.37 (was -0.5 ≈ 0.60 – too noisy)
+        print("Explorations-Rauschen (log_std) erfolgreich auf -1.0 zurückgesetzt!")
+    else:
+        if args.continue_training:
+            print(f"[Warning] Kein Modell unter '{model_zip_path}' gefunden. Starte neues Training von vorne.")
+        # Create PPO model
+        model = PPO(
+            "MlpPolicy",
+            env,
+            learning_rate=3e-4,
+            n_steps=4096,             # Doubled for more stable gradient estimates
+            batch_size=256,           # Larger batches for better statistics
+            n_epochs=15,              # More passes over each batch
+            gamma=0.995,              # Long-horizon planning for strategic corner-cutting
+            gae_lambda=0.95,
+            clip_range=0.2,
+            ent_coef=0.005,           # Low entropy – avoids wild exploration (std was 6.47)
+            vf_coef=1.0,              # Stronger value loss weight (fixes explained_var=0.29)
+            verbose=1,
+            tensorboard_log=tb_log,
+            policy_kwargs=dict(
+                net_arch=dict(pi=[128, 128], vf=[256, 128])  # Separate, larger value network
+            )
+        )
     
     # Initialize callback
-    callback = RenderCallback(render_training=render_training)
+    callback = RenderCallback(render_training=render_training, forced_stage=args.stage)
     
     try:
         print("Starte Training...")
