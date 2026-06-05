@@ -25,23 +25,28 @@ class ObsVisualizer:
             print(f"[ObsVisualizer] Warning: File '{img_path}' does not exist. Using blank background.")
             self.bg_img = np.zeros((self.window_size, self.window_size), dtype=np.uint8)
 
-    def draw(self, pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80, p_150=None, p_corner=None):
+    def draw(self, pose, raw_obs, obs_vector, driving_direction, best_closest,
+             p_inner_40=None, p_inner_100=None, p_outer_40=None, p_outer_100=None,
+             p_corner=None):
         """
-        Draws the observation debug window.
+        Draws the observation debug window with boundary lookahead points.
         
         Parameters:
             pose: tuple of (rx, ry, ryaw)
-            raw_obs: numpy array of 12 elements (unnormalized)
-            obs_vector: numpy array of 12 elements (normalized and clipped)
+            raw_obs: numpy array of 14 elements (unnormalized)
+            obs_vector: numpy array of 14 elements (normalized and clipped)
             driving_direction: "CCW" or "CW"
-            best_closest: coordinates of closest point on path (x, y) or None
-            p_40: coordinates of lookahead point 40cm (x, y) or None
-            p_80: coordinates of lookahead point 80cm (x, y) or None
+            best_closest: coordinates of closest point on centerline (x, y) or None
+            p_inner_40: inner boundary point at 40cm lookahead or None
+            p_inner_100: inner boundary point at 100cm lookahead or None
+            p_outer_40: outer boundary point at 40cm lookahead or None
+            p_outer_100: outer boundary point at 100cm lookahead or None
+            p_corner: next inner corner position or None
         """
         # 1. Convert grayscale background to BGR
         img = cv2.cvtColor(self.bg_img, cv2.COLOR_GRAY2BGR)
         
-        # 2. Draw Ideal Line (rounded square track)
+        # 2. Draw Ideal Line (rounded square track centerline)
         from . import geometry
         path_points = []
         total_len = 4.0 + math.pi
@@ -56,37 +61,56 @@ class ObsVisualizer:
         for i in range(n_points):
             p1 = path_points[i]
             p2 = path_points[(i + 1) % n_points]
-            cv2.line(img, p1, p2, color=(255, 180, 50), thickness=2, lineType=cv2.LINE_AA)
+            cv2.line(img, p1, p2, color=(255, 180, 50), thickness=1, lineType=cv2.LINE_AA)
+        
+        # 2.5 Draw inner wall rectangle (1,1)-(2,2) and outer wall rectangle (0,0)-(3,3)
+        def to_px(x, y):
+            return (int(x * self.scale), int(self.window_size - y * self.scale))
+        
+        # Inner wall
+        inner_corners = [to_px(1, 1), to_px(2, 1), to_px(2, 2), to_px(1, 2)]
+        for i in range(4):
+            cv2.line(img, inner_corners[i], inner_corners[(i+1) % 4], (100, 100, 255), 1, cv2.LINE_AA)
+        
+        # Outer wall
+        outer_corners = [to_px(0, 0), to_px(3, 0), to_px(3, 3), to_px(0, 3)]
+        for i in range(4):
+            cv2.line(img, outer_corners[i], outer_corners[(i+1) % 4], (255, 100, 100), 1, cv2.LINE_AA)
         
         rx, ry, ryaw = pose
         rx_px = int(rx * self.scale)
         ry_px = int(self.window_size - ry * self.scale)
         
-        # 3. Draw distance line from robot to closest point
-        if best_closest is not None:
-            cx_px = int(best_closest[0] * self.scale)
-            cy_px = int(self.window_size - best_closest[1] * self.scale)
-            cv2.line(img, (rx_px, ry_px), (cx_px, cy_px), (0, 0, 255), 2, lineType=cv2.LINE_AA)
-            cv2.circle(img, (cx_px, cy_px), 5, (0, 0, 255), -1, lineType=cv2.LINE_AA)
+        # 3. (Centerline distance line removed to focus on boundaries)
             
-        # 4. Draw lookahead points (40cm & 80cm)
-        if p_40 is not None:
-            p40_px = int(p_40[0] * self.scale)
-            p40_py = int(self.window_size - p_40[1] * self.scale)
-            cv2.circle(img, (p40_px, p40_py), 6, (0, 255, 255), -1, lineType=cv2.LINE_AA) # Yellow dot
-            cv2.line(img, (rx_px, ry_px), (p40_px, p40_py), (0, 200, 200), 1, lineType=cv2.LINE_AA)
+        # 4. Draw boundary lookahead points
+        # Inner boundary: orange dots
+        if p_inner_40 is not None:
+            px_i40 = int(p_inner_40[0] * self.scale)
+            py_i40 = int(self.window_size - p_inner_40[1] * self.scale)
+            cv2.circle(img, (px_i40, py_i40), 6, (0, 140, 255), -1, lineType=cv2.LINE_AA)  # Orange
+            cv2.line(img, (rx_px, ry_px), (px_i40, py_i40), (0, 100, 200), 1, lineType=cv2.LINE_AA)
             
-        if p_80 is not None:
-            p80_px = int(p_80[0] * self.scale)
-            p80_py = int(self.window_size - p_80[1] * self.scale)
-            cv2.circle(img, (p80_px, p80_py), 6, (0, 165, 255), -1, lineType=cv2.LINE_AA) # Orange dot
-            cv2.line(img, (rx_px, ry_px), (p80_px, p80_py), (0, 120, 220), 1, lineType=cv2.LINE_AA)
+        if p_inner_100 is not None:
+            px_i100 = int(p_inner_100[0] * self.scale)
+            py_i100 = int(self.window_size - p_inner_100[1] * self.scale)
+            cv2.circle(img, (px_i100, py_i100), 6, (0, 100, 200), -1, lineType=cv2.LINE_AA)  # Dark orange
+            cv2.line(img, (rx_px, ry_px), (px_i100, py_i100), (0, 80, 160), 1, lineType=cv2.LINE_AA)
             
-        if p_150 is not None:
-            p150_px = int(p_150[0] * self.scale)
-            p150_py = int(self.window_size - p_150[1] * self.scale)
-            cv2.circle(img, (p150_px, p150_py), 6, (255, 0, 255), -1, lineType=cv2.LINE_AA) # Magenta dot
-            cv2.line(img, (rx_px, ry_px), (p150_px, p150_py), (200, 0, 200), 1, lineType=cv2.LINE_AA)
+        # Outer boundary: cyan dots
+        if p_outer_40 is not None:
+            px_o40 = int(p_outer_40[0] * self.scale)
+            py_o40 = int(self.window_size - p_outer_40[1] * self.scale)
+            cv2.circle(img, (px_o40, py_o40), 6, (255, 255, 0), -1, lineType=cv2.LINE_AA)  # Cyan
+            cv2.line(img, (rx_px, ry_px), (px_o40, py_o40), (200, 200, 0), 1, lineType=cv2.LINE_AA)
+            
+        if p_outer_100 is not None:
+            px_o100 = int(p_outer_100[0] * self.scale)
+            py_o100 = int(self.window_size - p_outer_100[1] * self.scale)
+            cv2.circle(img, (px_o100, py_o100), 6, (200, 200, 0), -1, lineType=cv2.LINE_AA)  # Dark cyan
+            cv2.line(img, (rx_px, ry_px), (px_o100, py_o100), (160, 160, 0), 1, lineType=cv2.LINE_AA)
+            
+        # (Connecting lines between inner and outer boundary points removed)
             
         if p_corner is not None:
             pcr_px = int(p_corner[0] * self.scale)
@@ -95,16 +119,13 @@ class ObsVisualizer:
             cv2.circle(img, (pcr_px, pcr_py), 5, (255, 255, 0), -1, lineType=cv2.LINE_AA)
             
         # 4.5 Draw Obstacles from observation vector (reconstruct global position)
-        if len(raw_obs) >= 12:
+        if len(raw_obs) >= 15:
             alpha = ryaw + math.pi / 2.0
             cos_a = math.cos(alpha)
             sin_a = math.sin(alpha)
             
-            # Detect indices based on length
-            if len(raw_obs) >= 15:
-                o1_idx, o2_idx = 9, 12
-            else:
-                o1_idx, o2_idx = 6, 9
+            # Obstacle indices in new 15-element obs vector
+            o1_idx, o2_idx = 9, 12
             
             # Obstacle 1
             o1_x_loc, o1_y_loc, o1_col = raw_obs[o1_idx], raw_obs[o1_idx+1], raw_obs[o1_idx+2]
@@ -166,23 +187,14 @@ class ObsVisualizer:
         cv2.putText(sidebar, "Idx  Feature  Raw  Norm", (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1, lineType=cv2.LINE_AA)
         cv2.line(sidebar, (15, 105), (sidebar_w - 15, 105), (50, 50, 50), 1)
         
-        if len(raw_obs) >= 15:
-            labels = [
-                "ego_v_x", "steer", "lat_err", "hdg_err",
-                "y_loc_40", "y_loc_80", "y_loc_150", "corner_x",
-                "corner_y", "obs1_x", "obs1_y", "obs1_col",
-                "obs2_x", "obs2_y", "obs2_col"
-            ]
-            num_feats = 15
-            y_spacing = 28
-        else:
-            labels = [
-                "ego_v_x", "steer", "lat_err", "hdg_err",
-                "y_loc_40", "y_loc_80", "obs1_x", "obs1_y",
-                "obs1_col", "obs2_x", "obs2_y", "obs2_col"
-            ]
-            num_feats = 12
-            y_spacing = 35
+        labels = [
+            "ego_v_x", "steer", "diff_yaw", "inn_y40", "inn_y100",
+            "out_y40", "out_y100", "corner_x",
+            "corner_y", "obs1_x", "obs1_y", "obs1_col",
+            "obs2_x", "obs2_y", "obs2_col"
+        ]
+        num_feats = 15
+        y_spacing = 30
         
         y_offset = 125
         for i in range(num_feats):
@@ -215,6 +227,16 @@ class ObsVisualizer:
             
             y_offset += y_spacing
             
+        # Legend
+        y_offset += 10
+        cv2.line(sidebar, (15, y_offset), (sidebar_w - 15, y_offset), (50, 50, 50), 1)
+        y_offset += 20
+        cv2.circle(sidebar, (25, y_offset), 5, (0, 140, 255), -1)
+        cv2.putText(sidebar, "Inner boundary", (40, y_offset + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1, lineType=cv2.LINE_AA)
+        y_offset += 20
+        cv2.circle(sidebar, (25, y_offset), 5, (255, 255, 0), -1)
+        cv2.putText(sidebar, "Outer boundary", (40, y_offset + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1, lineType=cv2.LINE_AA)
+            
         # Combine map and sidebar
         combined = np.hstack((img, sidebar))
         return combined
@@ -222,11 +244,16 @@ class ObsVisualizer:
 # Global helper function for ease of use
 _global_visualizer = None
 
-def draw_observation_window(pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80, p_150=None, p_corner=None, window_name="WRO Observation Debug"):
+def draw_observation_window(pose, raw_obs, obs_vector, driving_direction, best_closest,
+                            p_inner_40=None, p_inner_100=None, p_outer_40=None, p_outer_100=None,
+                            p_corner=None, window_name="WRO Observation Debug"):
     global _global_visualizer
     if _global_visualizer is None:
         _global_visualizer = ObsVisualizer()
     
-    combined_img = _global_visualizer.draw(pose, raw_obs, obs_vector, driving_direction, best_closest, p_40, p_80, p_150, p_corner)
+    combined_img = _global_visualizer.draw(
+        pose, raw_obs, obs_vector, driving_direction, best_closest,
+        p_inner_40, p_inner_100, p_outer_40, p_outer_100, p_corner
+    )
     cv2.imshow(window_name, combined_img)
     cv2.waitKey(1)

@@ -123,9 +123,11 @@ class WebotsWroEnv(gym.Env):
         self.raw_obs = np.zeros(15, dtype=np.float32)
         self.obs_vector = np.zeros(15, dtype=np.float32)
         self.best_closest = None
-        self.p_40 = None
-        self.p_80 = None
-        self.p_150 = None
+        self.lateral_error_for_reward = 0.0
+        self.p_inner_40 = None
+        self.p_inner_100 = None
+        self.p_outer_40 = None
+        self.p_outer_100 = None
         self.p_corner = None
         self.rx = 1.5
         self.ry = 0.5
@@ -241,21 +243,24 @@ class WebotsWroEnv(gym.Env):
         rx, ry, ryaw = self.estimator.update(sensor_data)
         
         # 3. Planning (observation computation)
-        self.raw_obs, self.obs_vector, self.best_closest, self.p_40, self.p_80, self.p_150, self.p_corner = planning.compute_observation_vector(
+        result = planning.compute_observation_vector(
             pose=(rx, ry, ryaw),
             obstacles=self.estimator.obstacle_mapper.obstacles,
             driving_direction=self.estimator.driving_direction,
             smoothed_steering=self.car_controller.smoothed_steering,
             ego_v_x=ego_v_x
         )
+        self.raw_obs = result[0]
+        self.obs_vector = result[1]
+        self.best_closest = result[2]
+        self.lateral_error_for_reward = result[3]
+        self.current_path_s = result[4]
+        self.p_inner_40 = result[5]
+        self.p_inner_100 = result[6]
+        self.p_outer_40 = result[7]
+        self.p_outer_100 = result[8]
+        self.p_corner = result[9]
         self.rx, self.ry, self.ryaw = rx, ry, ryaw
-        
-        # Track path progress s
-        from wro_core import geometry
-        best_closest, best_dist, best_tangent, best_segment_idx, best_t = geometry.get_closest_point_on_path(
-            rx, ry, self.estimator.driving_direction
-        )
-        self.current_path_s = best_segment_idx * 2.0 + best_t * 2.0
         
         return self.obs_vector
 
@@ -300,8 +305,9 @@ class WebotsWroEnv(gym.Env):
         # Extract normalized values directly from computed observation vector
         speed_ratio = float(obs[0])
         ego_v_x = speed_ratio * self.max_linear_velocity
-        lateral_error_normalized = float(obs[2])
-        heading_error_normalized = float(obs[3])
+        
+        # Lateral error for reward (computed internally, not from obs vector)
+        lateral_error_normalized = np.clip(self.lateral_error_for_reward / 0.5, -1.0, 1.0)
         
         # Step penalty
         step_penalty = -0.3
@@ -327,26 +333,29 @@ class WebotsWroEnv(gym.Env):
         # Accumulate progress
         self.cumulative_progress += diff_s
         
+        # Progress reward (identical for both curriculum stages)
+        progress_reward = diff_s * 20.0
+        
         if self.curriculum_stage == 1:
-            # Stage 1: Safety focus (high lateral penalty, standard speed reward)
-            lateral_penalty = -abs(lateral_error_normalized) * 1.5
-            heading_penalty = -abs(heading_error_normalized) * 0.5
+            # Stage 1: Safety focus (no lateral penalty)
             speed_reward = (max(0.0, speed_ratio) ** 2) * 5.0
             
-            reward = speed_reward + step_penalty + lateral_penalty + heading_penalty + smoothness_penalty + action_steer_penalty
+            reward = progress_reward + speed_reward + step_penalty + smoothness_penalty + action_steer_penalty
         else:
-            # Stage 2: Performance focus (progress-based reward, relaxed lateral penalty)
-            progress_reward = diff_s * 15.0
+            # Stage 2: Performance focus
+            # Quadratic speed reward to heavily reward driving at the limit
+            speed_reward = (max(0.0, speed_ratio) ** 2) * 10.0
             
-            lat_err_abs = abs(lateral_error_normalized)
-            if lat_err_abs <= 0.5: # within +/- 25cm
-                lateral_penalty = 0.0
-            else:
-                lateral_penalty = -3.0 * ((lat_err_abs - 0.5) ** 2)
-                
-            heading_penalty = 0.0
+            # Remove steering penalty at speed for Stage 2 to allow aggressive cornering
+            stage2_steer_penalty = 0.0
             
-            reward = progress_reward + step_penalty + lateral_penalty + heading_penalty + smoothness_penalty + action_steer_penalty
+            # Increased step penalty – makes time expensive, forces faster driving
+            stage2_step_penalty = -1.8
+            
+            # Reduced smoothness penalty for agile cornering in Stage 2
+            stage2_smoothness_penalty = -0.08 * (steer_delta_diff ** 2)
+            
+            reward = progress_reward + speed_reward + stage2_step_penalty + stage2_smoothness_penalty + stage2_steer_penalty
         
         terminated = False
         truncated = False
@@ -363,14 +372,24 @@ class WebotsWroEnv(gym.Env):
             print(f"[Gym Env] Error checking contact points: {e}")
             
         if collision:
-            reward = -50.0
+            if self.curriculum_stage == 1:
+                reward = -50.0  # Absolute penalty in Stage 1
+            else:
+                reward += -40.0  # Additive in Stage 2 – allows aggressive exploration near walls
             terminated = True
             print("[Gym Env] COLLISION detected! Resetting.")
             
         # Lap completion check based on cumulative progress
         if self.cumulative_progress >= (total_len - 0.2):
+            if self.curriculum_stage == 1:
+                reward += 150.0
+                print(f"[Gym Env] LAP completed ({self.estimator.driving_direction})! Terminating episode. Bonus reward +150.0")
+            else:
+                # Time-based bonus: faster laps get exponentially more reward
+                time_bonus = max(50.0, 400.0 - self.total_steps * 4.0)
+                reward += time_bonus
+                print(f"[Gym Env] LAP completed ({self.estimator.driving_direction})! Terminating episode. Time bonus +{time_bonus:.0f} ({self.total_steps} steps)")
             terminated = True
-            print(f"[Gym Env] LAP completed ({self.estimator.driving_direction})! Terminating episode.")
                 
         # Stagnation check
         if ego_v_x < 0.01:
@@ -450,9 +469,10 @@ class WebotsWroEnv(gym.Env):
             obs_vector=self.obs_vector,
             driving_direction=self.estimator.driving_direction,
             best_closest=self.best_closest,
-            p_40=self.p_40,
-            p_80=self.p_80,
-            p_150=self.p_150,
+            p_inner_40=self.p_inner_40,
+            p_inner_100=self.p_inner_100,
+            p_outer_40=self.p_outer_40,
+            p_outer_100=self.p_outer_100,
             p_corner=self.p_corner,
             window_name="WRO Observation Debug"
         )

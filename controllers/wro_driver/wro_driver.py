@@ -84,7 +84,7 @@ car_controller = control.Controller()
 
 # --- State variables ---
 imu_yaw_initial = None
-global_obs_data = (None, None, None, None, None)
+
 
 # Reset obstacles
 randomize_obstacles(robot, train=False)
@@ -163,14 +163,18 @@ while robot.step(config.TIME_STEP) != -1:
     # Calibration is completed, proceed with standard control loop
     robot_pose = estimator.update(sensor_data)
     
-    global_obs_data = planning.compute_observation_vector(
+    result = planning.compute_observation_vector(
         pose=robot_pose,
         obstacles=estimator.obstacle_mapper.obstacles,
         driving_direction=estimator.driving_direction,
         smoothed_steering=car_controller.smoothed_steering,
         ego_v_x=ego_v_x
     )
-    raw_obs, obs_vector, best_closest, p_40, p_80, p_150, p_corner = global_obs_data
+    raw_obs, obs_vector = result[0], result[1]
+    best_closest = result[2]
+    p_inner_40, p_inner_100 = result[5], result[6]
+    p_outer_40, p_outer_100 = result[7], result[8]
+    p_corner = result[9]
     
     # --- 3. STAGE 3: PLANNING ---
     target_speed, target_steering = rl_planner.plan(obs_vector)
@@ -190,20 +194,6 @@ while robot.step(config.TIME_STEP) != -1:
         vis_img = estimator.icp_localizer.render()
         vis_img = estimator.obstacle_mapper.render(vis_img, robot_pose, estimator.icp_localizer.scale, estimator.icp_localizer.window_size)
         
-        # Overlay mode indicator text
-        mode_text = "Planning: RL (ONNX)"
-        text_color = (0, 255, 0)
-        cv2.putText(
-            vis_img,
-            mode_text,
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            text_color,
-            2,
-            lineType=cv2.LINE_AA
-        )
-        
         if "camera_image" in sensor_data:
             cam_debug = estimator.obstacle_mapper.render_camera(sensor_data["camera_image"], robot_pose)
             try:
@@ -218,9 +208,10 @@ while robot.step(config.TIME_STEP) != -1:
                 obs_vector=obs_vector,
                 driving_direction=estimator.driving_direction,
                 best_closest=best_closest,
-                p_40=p_40,
-                p_80=p_80,
-                p_150=p_150,
+                p_inner_40=p_inner_40,
+                p_inner_100=p_inner_100,
+                p_outer_40=p_outer_40,
+                p_outer_100=p_outer_100,
                 p_corner=p_corner,
                 window_name="WRO Observation Debug"
             )
