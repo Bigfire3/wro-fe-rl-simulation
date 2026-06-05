@@ -46,12 +46,10 @@ class Controller:
         speed_left = speed * (1.0 + diff_factor)
         speed_right = speed * (1.0 - diff_factor)
         
-        # Scale down if either wheel speed exceeds physical limits
-        max_wheel_speed = max(abs(speed_left), abs(speed_right))
-        if max_wheel_speed > config.MAX_MOTOR_VELOCITY:
-            scale = config.MAX_MOTOR_VELOCITY / max_wheel_speed
-            speed_left *= scale
-            speed_right *= scale
+        # Clamp to prevent Webots warning and respect motor limits
+        limit = config.MAX_MOTOR_VELOCITY - 1e-4
+        speed_left = float(np.clip(speed_left, -limit, limit))
+        speed_right = float(np.clip(speed_right, -limit, limit))
 
         # Drive motors
         motor_right.setVelocity(speed_right)
