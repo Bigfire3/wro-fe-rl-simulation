@@ -16,13 +16,13 @@ TIME_STEP = 20             # ms
 
 # --- Observation Space Normalization Factors ---
 NORM_FACTORS = np.array([
-    1.0,                         # ego_v_x
+    1.0,                         # ego_v_x (overwritten at runtime)
     1.0 / MAX_STEERING,          # smoothed_steering
-    1.0 / 0.5,                   # lateral_error
-    1.0 / (math.pi / 2.0),       # heading_error
-    1.0 / 0.4,                   # y_loc_40
-    1.0 / 0.8,                   # y_loc_80
-    1.0 / 1.5,                   # y_loc_150
+    1.0 / (math.pi / 2.0),       # diff_yaw (heading_error)
+    1.0 / 0.5,                   # inner_y_40
+    1.0 / 0.5,                   # inner_y_100
+    1.0 / 0.5,                   # outer_y_40
+    1.0 / 0.5,                   # outer_y_100
     1.0 / 2.5,                   # corner_x_loc
     1.0 / 1.5,                   # corner_y_loc
     1.0 / 2.0,                   # obs1_x_loc
@@ -32,3 +32,4 @@ NORM_FACTORS = np.array([
     1.0 / 2.0,                   # obs2_y_loc
     1.0                          # obs2_color
 ], dtype=np.float32)
+

@@ -162,3 +162,112 @@ def get_next_inner_corner(s, direction):
             return np.array([2.0, 2.0])
         else:
             return np.array([2.0, 1.0])
+
+def get_point_and_tangent_at_s(s, direction):
+    """Returns (point, tangent) at arc-length position s along the centerline."""
+    segments = get_path_segments(direction)
+    total_len = 4.0 + math.pi
+    s = s % total_len
+    
+    s_start = 0.0
+    for seg in segments:
+        seg_len = seg["length"]
+        if s_start <= s <= s_start + seg_len + 1e-9:
+            t = (s - s_start) / seg_len
+            t = np.clip(t, 0.0, 1.0)
+            if seg["type"] == "line":
+                point = seg["p1"] + t * (seg["p2"] - seg["p1"])
+                d_seg = seg["p2"] - seg["p1"]
+                tangent = d_seg / np.linalg.norm(d_seg)
+            else:  # arc
+                theta = seg["start_angle"] + t * seg["span"]
+                point = seg["center"] + seg["radius"] * np.array([math.cos(theta), math.sin(theta)])
+                if seg["span"] > 0:  # CCW arc
+                    tangent = np.array([-math.sin(theta), math.cos(theta)])
+                else:  # CW arc
+                    tangent = np.array([math.sin(theta), -math.cos(theta)])
+            return point, tangent
+        s_start += seg_len
+    
+    # Fallback: last segment end
+    seg = segments[-1]
+    if seg["type"] == "line":
+        point = seg["p2"].copy()
+        d_seg = seg["p2"] - seg["p1"]
+        tangent = d_seg / np.linalg.norm(d_seg)
+    else:
+        theta = seg["start_angle"] + seg["span"]
+        point = seg["center"] + seg["radius"] * np.array([math.cos(theta), math.sin(theta)])
+        if seg["span"] > 0:
+            tangent = np.array([-math.sin(theta), math.cos(theta)])
+        else:
+            tangent = np.array([math.sin(theta), -math.cos(theta)])
+    return point, tangent
+
+def _ray_rect_intersection(px, py, dx, dy, x_min, y_min, x_max, y_max):
+    """Find the nearest positive-t intersection of ray (px,py)+t*(dx,dy) with rectangle walls.
+    
+    Returns the distance t, or float('inf') if no intersection found.
+    """
+    t_min = float('inf')
+    
+    # Check vertical walls (x = x_min, x = x_max)
+    for wall_x in [x_min, x_max]:
+        if abs(dx) > 1e-9:
+            t = (wall_x - px) / dx
+            if t > 1e-6:
+                hit_y = py + t * dy
+                if y_min - 1e-9 <= hit_y <= y_max + 1e-9:
+                    t_min = min(t_min, t)
+    
+    # Check horizontal walls (y = y_min, y = y_max)
+    for wall_y in [y_min, y_max]:
+        if abs(dy) > 1e-9:
+            t = (wall_y - py) / dy
+            if t > 1e-6:
+                hit_x = px + t * dx
+                if x_min - 1e-9 <= hit_x <= x_max + 1e-9:
+                    t_min = min(t_min, t)
+    
+    return t_min
+
+def get_boundary_points_at_s(s, direction):
+    """
+    Compute inner and outer track boundary points at centerline position s.
+    
+    Projects perpendicular from the centerline to the inner wall rectangle
+    (1.0, 1.0)-(2.0, 2.0) and the outer wall rectangle (0.0, 0.0)-(3.0, 3.0).
+    
+    Returns (inner_point, outer_point) as numpy arrays.
+    """
+    point, tangent = get_point_and_tangent_at_s(s, direction)
+    left_normal = np.array([-tangent[1], tangent[0]])
+    
+    # For CCW: left normal points toward inner wall (toward field center)
+    # For CW: left normal points toward outer wall
+    if direction == "CCW":
+        inner_dir = left_normal
+        outer_dir = -left_normal
+    else:
+        inner_dir = -left_normal
+        outer_dir = left_normal
+    
+    # Ray-cast to inner wall (rectangle 1.0-2.0)
+    d_inner = _ray_rect_intersection(
+        point[0], point[1], inner_dir[0], inner_dir[1],
+        1.0, 1.0, 2.0, 2.0
+    )
+    if d_inner == float('inf'):
+        d_inner = 0.5  # fallback
+    inner_point = point + inner_dir * d_inner
+    
+    # Ray-cast to outer wall (rectangle 0.0-3.0)
+    d_outer = _ray_rect_intersection(
+        point[0], point[1], outer_dir[0], outer_dir[1],
+        0.0, 0.0, 3.0, 3.0
+    )
+    if d_outer == float('inf'):
+        d_outer = 0.5  # fallback
+    outer_point = point + outer_dir * d_outer
+    
+    return inner_point, outer_point

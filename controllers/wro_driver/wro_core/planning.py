@@ -7,60 +7,64 @@ from . import geometry
 
 def compute_observation_vector(pose, obstacles, driving_direction, smoothed_steering, ego_v_x):
     """
-    Computes the standard 12-dimensional observation vector for the WRO agent.
+    Computes the 14-dimensional observation vector for the WRO agent.
+    
+    Uses inner/outer track boundary lookahead points instead of centerline
+    deviation, giving the agent direct knowledge of track boundaries.
     
     Returns:
-        raw_obs (np.ndarray): Unnormalized features.
+        raw_obs (np.ndarray): Unnormalized features (14 elements).
         obs_vector (np.ndarray): Normalized and clipped features ([-1.0, 1.0]).
-        best_closest (np.ndarray): Nearest point on path coordinates (for visualization/rewards).
-        p_40 (np.ndarray): Coordinates of the 40cm lookahead point.
-        p_80 (np.ndarray): Coordinates of the 80cm lookahead point.
+        best_closest (np.ndarray): Nearest point on centerline (for visualization).
+        lateral_error (float): Signed lateral distance to centerline (for reward only).
+        s_current (float): Current arc-length position on centerline.
+        p_inner_40 (np.ndarray): Inner boundary point at 40cm lookahead.
+        p_inner_100 (np.ndarray): Inner boundary point at 100cm lookahead.
+        p_outer_40 (np.ndarray): Outer boundary point at 40cm lookahead.
+        p_outer_100 (np.ndarray): Outer boundary point at 100cm lookahead.
+        corner_global (np.ndarray): Next inner corner position.
     """
     rx, ry, ryaw = pose
     
-    # 1. lateral_error
+    # 1. Get current position on centerline (needed for obstacle s-distance, progress, and reward)
     best_closest, best_dist, best_tangent, best_segment_idx, best_t = geometry.get_closest_point_on_path(rx, ry, driving_direction)
+    s_current = best_segment_idx * 2.0 + best_t * 2.0
+    total_len = 4.0 + math.pi
+    
+    # Compute signed lateral error (for reward only, not in obs vector)
     left_normal = np.array([-best_tangent[1], best_tangent[0]])
     p = np.array([rx, ry])
     lateral_error = np.dot(p - best_closest, left_normal)
     
-    # 2. heading_error (repaired)
+    # Compute heading error (diff_yaw) relative to the centerline tangent
     theta_robot = math.atan2(math.cos(ryaw), -math.sin(ryaw))
     theta_tangent = math.atan2(best_tangent[1], best_tangent[0])
     diff_yaw = theta_robot - theta_tangent
     diff_yaw = (diff_yaw + math.pi) % (2.0 * math.pi) - math.pi
     
-    # 3. lookahead points (40cm & 80cm & 150cm)
-    s_current = best_segment_idx * 2.0 + best_t * 2.0
-    total_len = 4.0 + math.pi
-    
+    # 2. Boundary lookahead points (40cm and 100cm ahead on centerline)
     s_40 = (s_current + 0.4) % total_len
-    p_40 = geometry.get_point_at_s(s_40, driving_direction)
+    s_100 = (s_current + 1.0) % total_len
     
-    s_80 = (s_current + 0.8) % total_len
-    p_80 = geometry.get_point_at_s(s_80, driving_direction)
+    p_inner_40, p_outer_40 = geometry.get_boundary_points_at_s(s_40, driving_direction)
+    p_inner_100, p_outer_100 = geometry.get_boundary_points_at_s(s_100, driving_direction)
     
-    s_150 = (s_current + 1.5) % total_len
-    p_150 = geometry.get_point_at_s(s_150, driving_direction)
-    
-    # Transform lookahead points to local coordinates
+    # Transform boundary points to local coordinates (extract y component)
     alpha = ryaw + math.pi / 2.0
     cos_a = math.cos(alpha)
     sin_a = math.sin(alpha)
     
-    dx_40 = p_40[0] - rx
-    dy_40 = p_40[1] - ry
-    y_loc_40 = -dx_40 * sin_a + dy_40 * cos_a
+    def to_local_y(gx, gy):
+        dx = gx - rx
+        dy = gy - ry
+        return -dx * sin_a + dy * cos_a
     
-    dx_80 = p_80[0] - rx
-    dy_80 = p_80[1] - ry
-    y_loc_80 = -dx_80 * sin_a + dy_80 * cos_a
+    inner_y_40 = to_local_y(p_inner_40[0], p_inner_40[1])
+    inner_y_100 = to_local_y(p_inner_100[0], p_inner_100[1])
+    outer_y_40 = to_local_y(p_outer_40[0], p_outer_40[1])
+    outer_y_100 = to_local_y(p_outer_100[0], p_outer_100[1])
     
-    dx_150 = p_150[0] - rx
-    dy_150 = p_150[1] - ry
-    y_loc_150 = -dx_150 * sin_a + dy_150 * cos_a
-    
-    # 3.5 Next Corner Position (Eck-Beacon)
+    # 3. Next Corner Position (Eck-Beacon)
     corner_global = geometry.get_next_inner_corner(s_current, driving_direction)
     dx_c = corner_global[0] - rx
     dy_c = corner_global[1] - ry
@@ -71,32 +75,48 @@ def compute_observation_vector(pose, obstacles, driving_direction, smoothed_stee
     valid_obstacles = []
     for obs in obstacles:
         ox, oy = obs.position
+        
+        # Project obstacle position onto the centerline path
+        _, obs_path_dist, _, _, obs_t = geometry.get_closest_point_on_path(ox, oy, driving_direction)
+        s_obs = obs_t * 2.0
+        
+        # Calculate signed path distance from robot to obstacle
+        s_dist = s_obs - s_current
+        if s_dist > total_len / 2.0:
+            s_dist -= total_len
+        elif s_dist < -total_len / 2.0:
+            s_dist += total_len
+            
         dx = ox - rx
         dy = oy - ry
         x_loc = dx * cos_a + dy * sin_a
         y_loc = -dx * sin_a + dy * cos_a
         
-        if x_loc > 0.0 and abs(y_loc) <= 1.0:
+        # Filter:
+        # - Obstacle is on our track corridor (within 0.8m of centerline)
+        # - Obstacle is ahead of the robot along the path (0.0 < s_dist <= 2.2m)
+        # - Obstacle is in front of the robot locally (x_loc > 0.0)
+        if obs_path_dist <= 0.8 and 0.0 < s_dist <= 2.2 and x_loc > 0.0:
             color_val = 1.0 if obs.color == "green" else -1.0 if obs.color == "red" else 0.0
             valid_obstacles.append({
                 "x_loc": x_loc,
                 "y_loc": y_loc,
                 "color": color_val,
-                "dist": math.hypot(x_loc, y_loc)
+                "s_dist": s_dist
             })
             
-    # Sort by total Euclidean distance ascending
-    valid_obstacles.sort(key=lambda item: item["dist"])
+    # Sort by path distance (s_dist) ascending
+    valid_obstacles.sort(key=lambda item: item["s_dist"])
     
     # Build raw observation vector (15 elements)
     raw_obs = np.array([
         ego_v_x,
         smoothed_steering,
-        lateral_error,
         diff_yaw,
-        y_loc_40,
-        y_loc_80,
-        y_loc_150,
+        inner_y_40,
+        inner_y_100,
+        outer_y_40,
+        outer_y_100,
         corner_x_loc,
         corner_y_loc,
         # Obstacle 1
@@ -111,7 +131,7 @@ def compute_observation_vector(pose, obstacles, driving_direction, smoothed_stee
     
     obs_vector = np.clip(raw_obs * config.NORM_FACTORS, -1.0, 1.0)
     
-    return raw_obs, obs_vector, best_closest, p_40, p_80, p_150, corner_global
+    return raw_obs, obs_vector, best_closest, lateral_error, s_current, p_inner_40, p_inner_100, p_outer_40, p_outer_100, corner_global
 
 
 class RLPlanner:
