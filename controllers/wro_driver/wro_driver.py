@@ -167,7 +167,7 @@ while robot.step(config.TIME_STEP) != -1:
         pose=robot_pose,
         obstacles=estimator.obstacle_mapper.obstacles,
         driving_direction=estimator.driving_direction,
-        smoothed_steering=car_controller.smoothed_steering,
+        last_steering=car_controller.last_steering,
         ego_v_x=ego_v_x
     )
     raw_obs, obs_vector = result[0], result[1]

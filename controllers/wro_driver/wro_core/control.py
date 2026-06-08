@@ -18,12 +18,12 @@ def ackermann_angles(target_angle):
 
 class Controller:
     def __init__(self):
-        self.smoothed_steering = 0.0
-        self.smoothed_speed = 0.0
+        self.last_steering = 0.0
+        self.last_speed = 0.0
         
     def reset(self):
-        self.smoothed_steering = 0.0
-        self.smoothed_speed = 0.0
+        self.last_steering = 0.0
+        self.last_speed = 0.0
         
     def apply(self, target_speed, target_steering, motor_left, motor_right, steer_left, steer_right):
         """
@@ -33,16 +33,16 @@ class Controller:
         
         Returns:
             speed (float): The actual velocity set on the motors.
-            steering (float): The actual smoothed target steering angle.
+            steering (float): The actual target steering angle.
         """
-        self.smoothed_steering = target_steering
-        self.smoothed_speed = target_speed
+        self.last_steering = target_steering
+        self.last_speed = target_speed
 
         speed = target_speed
             
         # Electronic differential for rear wheels
-        # If turning right (smoothed_steering > 0), the right wheel is inner (slower) and left is outer (faster).
-        diff_factor = (config.TRACK_FRONT / (2.0 * config.WHEELBASE)) * math.tan(self.smoothed_steering)
+        # If turning right (last_steering > 0), the right wheel is inner (slower) and left is outer (faster).
+        diff_factor = (config.TRACK_FRONT / (2.0 * config.WHEELBASE)) * math.tan(self.last_steering)
         speed_left = speed * (1.0 + diff_factor)
         speed_right = speed * (1.0 - diff_factor)
         
@@ -56,11 +56,11 @@ class Controller:
         motor_left.setVelocity(speed_left)
         
         # Ackermann steering servos
-        left_angle, right_angle = ackermann_angles(self.smoothed_steering)
+        left_angle, right_angle = ackermann_angles(self.last_steering)
         left_angle = float(np.clip(left_angle, -config.MAX_STEERING, config.MAX_STEERING))
         right_angle = float(np.clip(right_angle, -config.MAX_STEERING, config.MAX_STEERING))
         
         steer_left.setPosition(left_angle)
         steer_right.setPosition(right_angle)
         
-        return speed, self.smoothed_steering
+        return speed, self.last_steering
