@@ -47,6 +47,7 @@ Detailed documentation of coordinate transforms, localization mathematics, and m
 
 ## ✨ Key Technical Highlights
 
+*   **Template Matching for Initial Localization:** Calibrates the robot's initial pose `(x, y, yaw)` and driving direction (`CW`/`CCW`) using template matching on the start corridor, providing a robust initialization for the continuous ICP tracking loop.
 *   **Curriculum Reinforcement Learning:** Trained using **PPO (Stable-Baselines3)** on a custom **Gymnasium** environment. The agent transitions from **Stage 1 (Safety focus)**, which teaches lane-keeping and basic driving at a constant speed, to **Stage 2 (Performance focus)**, optimizing lap times with variable speed control and curve-cutting.
 *   **Translation-Only ICP:** Scan-to-map matching via a fast 3-iteration Iterative Closest Point algorithm to maintain an accurate estimate of the robot's local pose `(x, y, yaw)`.
 *   **Dynamic Obstacle Mapping:** Clusters LiDAR outliers (representing the obstacle boxes) and filters them dynamically. Implements a ray-casting visibility decay method to fade out obstacles once they are no longer in the vehicle's line-of-sight.
@@ -82,10 +83,17 @@ pip install -r requirements.txt
 ```
 
 ### 3. Training the Agent
-```bash
-python controllers/wro_driver/train.py --timesteps 150000 --no-render
-tensorboard --logdir=tb_logs
-```
+1. Open Webots and load the training world `worlds/track_training.wbt`.
+2. Ensure the robot's controller in the Scene Tree is set to `<extern>` (to connect to the external Gymnasium environment).
+3. Run the training script in your terminal:
+   ```bash
+   python controllers/wro_driver/train.py --timesteps 150000 --no-render
+   ```
+4. Start TensorBoard to monitor training progress:
+   ```bash
+   tensorboard --logdir=tb_logs
+   ```
 
 ### 4. Running Simulation & Inference
-Open the world file `worlds/track.wbt` in Webots and press the **Play** button. The controller node will start automatically and read `models/wro_model.onnx` to drive.
+1. Open Webots and load the world `worlds/track.wbt`.
+2. Press the **Play** button in Webots. The simulator will automatically launch the internal `wro_driver` controller, which loads the exported ONNX model (`models/wro_model.onnx`) and performs autonomous driving.
