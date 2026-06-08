@@ -231,43 +231,83 @@ def _ray_rect_intersection(px, py, dx, dy, x_min, y_min, x_max, y_max):
     
     return t_min
 
+def get_inner_point_at_s(s_inner, direction):
+    # s_inner is in [0, 4.0]
+    s_inner = s_inner % 4.0
+    if direction == "CCW":
+        if s_inner < 1.0:
+            return np.array([1.0 + s_inner, 1.0])
+        elif s_inner < 2.0:
+            return np.array([2.0, 1.0 + (s_inner - 1.0)])
+        elif s_inner < 3.0:
+            return np.array([2.0 - (s_inner - 2.0), 2.0])
+        else:
+            return np.array([1.0, 2.0 - (s_inner - 3.0)])
+    else: # CW
+        if s_inner < 1.0:
+            return np.array([2.0 - s_inner, 1.0])
+        elif s_inner < 2.0:
+            return np.array([1.0, 1.0 + (s_inner - 1.0)])
+        elif s_inner < 3.0:
+            return np.array([1.0 + (s_inner - 2.0), 2.0])
+        else:
+            return np.array([2.0, 2.0 - (s_inner - 3.0)])
+
+def get_outer_point_at_s(s_outer, direction):
+    # s_outer is in [0, 12.0]
+    s_outer = s_outer % 12.0
+    if direction == "CCW":
+        if s_outer < 2.0:
+            return np.array([1.0 + s_outer, 0.0])
+        elif s_outer < 5.0:
+            return np.array([3.0, s_outer - 2.0])
+        elif s_outer < 8.0:
+            return np.array([3.0 - (s_outer - 5.0), 3.0])
+        elif s_outer < 11.0:
+            return np.array([0.0, 3.0 - (s_outer - 8.0)])
+        else:
+            return np.array([s_outer - 11.0, 0.0])
+    else: # CW
+        if s_outer < 2.0:
+            return np.array([2.0 - s_outer, 0.0])
+        elif s_outer < 5.0:
+            return np.array([0.0, s_outer - 2.0])
+        elif s_outer < 8.0:
+            return np.array([s_outer - 5.0, 3.0])
+        elif s_outer < 11.0:
+            return np.array([3.0, 3.0 - (s_outer - 8.0)])
+        else:
+            return np.array([3.0 - (s_outer - 11.0), 0.0])
+
 def get_boundary_points_at_s(s, direction):
     """
     Compute inner and outer track boundary points at centerline position s.
     
-    Projects perpendicular from the centerline to the inner wall rectangle
-    (1.0, 1.0)-(2.0, 2.0) and the outer wall rectangle (0.0, 0.0)-(3.0, 3.0).
+    Uses a smooth segment-by-segment mapping to slide points along the inner and outer walls
+    without sticking in corners.
     
     Returns (inner_point, outer_point) as numpy arrays.
     """
-    point, tangent = get_point_and_tangent_at_s(s, direction)
-    left_normal = np.array([-tangent[1], tangent[0]])
+    total_len = 4.0 + math.pi
+    s = s % total_len
     
-    # For CCW: left normal points toward inner wall (toward field center)
-    # For CW: left normal points toward outer wall
-    if direction == "CCW":
-        inner_dir = left_normal
-        outer_dir = -left_normal
+    L_c = math.pi * 0.25
+    L_seg = 1.0 + L_c
+    delta = 0.20  # Sliding transition window in meters around corners
+    
+    m = int(s / L_seg)
+    s_relative = s - m * L_seg
+    
+    if s_relative <= 1.0:
+        t = s_relative / 1.0
+        s_inner = m * 1.0 + delta + t * (1.0 - 2.0 * delta)
+        s_outer = m * 3.0 + t * 1.0
     else:
-        inner_dir = -left_normal
-        outer_dir = left_normal
-    
-    # Ray-cast to inner wall (rectangle 1.0-2.0)
-    d_inner = _ray_rect_intersection(
-        point[0], point[1], inner_dir[0], inner_dir[1],
-        1.0, 1.0, 2.0, 2.0
-    )
-    if d_inner == float('inf'):
-        d_inner = 0.5  # fallback
-    inner_point = point + inner_dir * d_inner
-    
-    # Ray-cast to outer wall (rectangle 0.0-3.0)
-    d_outer = _ray_rect_intersection(
-        point[0], point[1], outer_dir[0], outer_dir[1],
-        0.0, 0.0, 3.0, 3.0
-    )
-    if d_outer == float('inf'):
-        d_outer = 0.5  # fallback
-    outer_point = point + outer_dir * d_outer
+        t = (s_relative - 1.0) / L_c
+        s_inner = (m + 1) * 1.0 - delta + t * (2.0 * delta)
+        s_outer = m * 3.0 + 1.0 + t * 2.0
+        
+    inner_point = get_inner_point_at_s(s_inner, direction)
+    outer_point = get_outer_point_at_s(s_outer, direction)
     
     return inner_point, outer_point
