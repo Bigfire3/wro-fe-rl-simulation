@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="media/Obs_Model_5.gif" width="60%" alt="Gym Environment Observation Debugger" />
+</p>
+
 # Reinforcement Learning Environment & Training Guide
 
 This guide explains the Gymnasium reinforcement learning environment wrapper (`wro_gym_env.py`) interfacing with the Webots robot simulation, and outlines how to configure, start, and manage training runs.
@@ -73,7 +77,7 @@ To train your own Reinforcement Learning model from scratch, follow these instru
 ### 1. Load the Training World in Webots
 1. Launch Webots.
 2. Open the training world: `worlds/track_training.wbt`.
-3. In the scene tree on the left, find the robot node (named `WRO_Autonoom_Racing_Robot` or similar).
+3. In the scene tree on the left, find the robot node (named `AckermannVehicle` or similar).
 4. Expand the robot properties and ensure the `controller` field is set to `<extern>`. This configuration detaches the built-in controller and allows the external Gymnasium Python environment to drive the simulation.
 
 ### 2. Start the Training Script
