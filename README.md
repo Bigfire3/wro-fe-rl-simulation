@@ -1,6 +1,5 @@
 <p align="center">
-  <img src="docs/media/Track_Model_5.gif" width="55%" alt="Webots 3D Simulation" />
-  <img src="docs/media/Obs_Model_5.gif" width="40%" alt="Observation Debugger" />
+  <img src="docs/media/Track_Model_5.gif" width="85%" alt="Webots 3D Simulation" />
 </p>
 
 # WRO Future Engineers - RL Autonomous Racing Simulation
@@ -13,7 +12,8 @@
 An autonomous racing robot for the **WRO (World Robot Olympiad) Future Engineers** competition, trained using **Deep Reinforcement Learning (PPO)** in a custom **Webots simulation**. The control pipeline features real-time **ICP-based localization** and **dynamic obstacle mapping** with ray-cast decay.
 
 <p align="center">
-  <img src="docs/media/Loc_Model_5.gif" width="50%" alt="ICP Localization & Path Visualizer" />
+  <img src="docs/media/Loc_Model_5.gif" width="48%" alt="ICP Localization & Path Visualizer" />
+  <img src="docs/media/Obs_Model_5.gif" width="48%" alt="Observation Debugger" />
 </p>
 
 ---
