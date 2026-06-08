@@ -37,13 +37,13 @@ graph LR
     Stage4 -.->|Feedback Loop| Stage1
 ```
 
-Detailed documentation of coordinate transforms, localization mathematics, and mapping algorithms can be found in [docs/README.md](docs/README.md).
+Detailed documentation of coordinate transforms, localization mathematics, and mapping algorithms can be found in the [wro_core README](controllers/wro_driver/wro_core/README.md).
 
 ---
 
 ## ✨ Key Technical Highlights
 
-*   **Curriculum Reinforcement Learning:** Trained using **PPO (Stable-Baselines3)** on a custom **Gymnasium** environment (see the detailed [wro_driver README](controllers/wro_driver/README.md) for specs on the 15D observation vector and reward shaping). The agent transitions from **Stage 1 (Safety focus)**, which teaches lane-keeping and basic driving at a constant speed, to **Stage 2 (Performance focus)**, optimizing lap times with variable speed control and curve-cutting.
+*   **Curriculum Reinforcement Learning:** Trained using **PPO (Stable-Baselines3)** on a custom **Gymnasium** environment (see the detailed [RL Training Guide](docs/rl_training.md) for specs on the 15D observation vector, reward shaping, and training parameters). The agent transitions from **Stage 1 (Safety focus)**, which teaches lane-keeping and basic driving at a constant speed, to **Stage 2 (Performance focus)**, optimizing lap times with variable speed control and curve-cutting.
 *   **Translation-Only ICP:** Scan-to-map matching via a fast 3-iteration Iterative Closest Point algorithm to maintain an accurate estimate of the robot's local pose `(x, y, yaw)`.
 *   **Dynamic Obstacle Mapping:** Clusters LiDAR outliers (representing the obstacle boxes) and filters them dynamically. Implements a ray-casting visibility decay method to fade out obstacles once they are no longer in the vehicle's line-of-sight.
 *   **Template Matching for Initial Localization:** Calibrates the robot's initial pose `(x, y, yaw)` and driving direction (`CW`/`CCW`) using template matching on the start corridor, providing a robust initialization for the continuous ICP tracking loop.
@@ -58,7 +58,7 @@ Detailed documentation of coordinate transforms, localization mathematics, and m
     *   `export_onnx.py`: Utility script to export trained Stable-Baselines3 policies to ONNX.
     *   `wro_driver.py`: Webots supervisor node executing the ONNX model inference.
     *   `wro_core/`: Auxiliary estimation, perception, planning, and control modules.
-*   [docs/](docs/): Technical documentation and visual assets.
+*   [docs/](docs/): Technical documentation and visual assets (including the [RL Training Guide](docs/rl_training.md)).
 *   [models/](models/): Exported ONNX model configurations (`wro_model.onnx`).
 *   [worlds/](worlds/): Simulation arenas (`track.wbt` for testing, `track_training.wbt` for training).
 
@@ -86,14 +86,4 @@ The repository already includes a pre-trained model (`models/wro_model.onnx`), a
 2. Press the **Play** button in Webots. The simulator will automatically launch the internal `wro_driver` controller, which loads the pre-trained ONNX model and drives autonomously.
 
 #### b) Training (Train Your Own Model)
-If you want to train your own reinforcement learning model from scratch:
-1. Open Webots and load the training world `worlds/track_training.wbt`.
-2. Ensure the robot's controller in the Scene Tree is set to `<extern>` (to connect to the external Gymnasium environment).
-3. Run the training script in your terminal:
-   ```bash
-   python controllers/wro_driver/train.py --timesteps 150000 --no-render
-   ```
-4. Start TensorBoard to monitor training progress:
-   ```bash
-   tensorboard --logdir=tb_logs
-   ```
+If you want to train your own reinforcement learning model from scratch, please refer to the detailed [RL Training Guide](docs/rl_training.md) for step-by-step instructions on setting up Webots, starting the training script, and monitoring progress.

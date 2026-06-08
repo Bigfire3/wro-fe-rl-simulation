@@ -1,10 +1,6 @@
-<p align="center">
-  <img src="../../docs/media/Obs_Model_5.gif" width="60%" alt="Gym Environment Observation Debugger" />
-</p>
+# Reinforcement Learning Environment & Training Guide
 
-# Gymnasium Reinforcement Learning Environment (`WebotsWroEnv`)
-
-This directory houses the core Gymnasium environment wrapper (`wro_gym_env.py`) interfacing with the Webots robot simulation, along with training and evaluation tools.
+This guide explains the Gymnasium reinforcement learning environment wrapper (`wro_gym_env.py`) interfacing with the Webots robot simulation, and outlines how to configure, start, and manage training runs.
 
 ---
 
@@ -64,6 +60,65 @@ The agent is trained using a **2-Stage Curriculum Learning** approach to decoupl
 
 ## 🛠️ Key Scripts
 
-*   [wro_gym_env.py](wro_gym_env.py): Extends `gymnasium.Env` to interface with the Webots Supervisor. Handles physics resets, obstacle randomization, sensor updates, coordinate transformations, curriculum thresholds, and reward calculation.
-*   [train.py](train.py): Runs training using Stable-Baselines3 PPO. Implements automatic checkpoint saving and curriculum-stage transition parameters.
-*   [export_onnx.py](export_onnx.py): Serializes the trained PyTorch PPO policy network into a standalone ONNX model for deployment.
+*   [wro_gym_env.py](../controllers/wro_driver/wro_gym_env.py): Extends `gymnasium.Env` to interface with the Webots Supervisor. Handles physics resets, obstacle randomization, sensor updates, coordinate transformations, curriculum thresholds, and reward calculation.
+*   [train.py](../controllers/wro_driver/train.py): Runs training using Stable-Baselines3 PPO. Implements automatic checkpoint saving and curriculum-stage transition parameters.
+*   [export_onnx.py](../controllers/wro_driver/export_onnx.py): Serializes the trained PyTorch PPO policy network into a standalone ONNX model for deployment.
+
+---
+
+## 🚀 How to Start and Manage Your Own Training
+
+To train your own Reinforcement Learning model from scratch, follow these instructions.
+
+### 1. Load the Training World in Webots
+1. Launch Webots.
+2. Open the training world: `worlds/track_training.wbt`.
+3. In the scene tree on the left, find the robot node (named `WRO_Autonoom_Racing_Robot` or similar).
+4. Expand the robot properties and ensure the `controller` field is set to `<extern>`. This configuration detaches the built-in controller and allows the external Gymnasium Python environment to drive the simulation.
+
+### 2. Start the Training Script
+Run the training script from the root of your project directory using the virtual environment:
+
+```bash
+# Windows
+.venv\Scripts\activate
+python controllers/wro_driver/train.py [parameters]
+
+# Linux / macOS
+source .venv/bin/activate
+python controllers/wro_driver/train.py [parameters]
+```
+
+### 3. Training Script Parameters (`train.py`)
+You can customize the training run using the following command-line flags:
+
+*   `--timesteps <int>`: Total number of training steps (default: `500000`).
+*   `--no-render`: Disables OpenCV window rendering during training. Excluding this flag opens debug visualization windows showing LiDAR inliers/outliers, camera feed, and the current observation vector state.
+*   `--continue-training` / `-c`: Continues training an existing checkpoint file (`models/wro_ppo_model.zip`) if it exists. Note that continuing resets the standard deviation of exploration noise (setting `log_std` to `-1.2`, i.e., `std ≈ 0.3`) to promote safe exploration of faster trajectories without policy collapse.
+*   `--stage <1|2>`: Forces a specific curriculum stage (1 or 2). If not specified, standard automatic curriculum logic is used (transits from Stage 1 to Stage 2 at 200,000 steps).
+
+**Example Commands:**
+```bash
+# Start a default training run for 300,000 steps with active OpenCV rendering
+python controllers/wro_driver/train.py --timesteps 300000
+
+# Continue training from the last saved model and force Curriculum Stage 2
+python controllers/wro_driver/train.py --continue-training --stage 2
+```
+
+### 4. Monitoring Progress with TensorBoard
+TensorBoard logs are saved in the `tb_logs/` folder. You can launch TensorBoard to monitor training rewards, learning rate, entropy, and current curriculum stage:
+
+```bash
+tensorboard --logdir=tb_logs
+```
+Then open `http://localhost:6006` in your web browser.
+
+### 5. Managing the Training Loop
+*   **Aborting Training Cleanly:** If rendering is enabled, you can focus the OpenCV window and press **`q`** or **`Esc`**. This raises a clean abort signal, terminating the loop without saving corrupted states.
+*   **Saving Checkpoints:** When the script finishes successfully, the trained model is automatically saved as `models/wro_ppo_model.zip`.
+*   **Exporting to ONNX:** To run inference inside Webots using the default simulator controller, convert the saved zip file into an ONNX model:
+    ```bash
+    python controllers/wro_driver/export_onnx.py
+    ```
+    This script reads `models/wro_ppo_model.zip` and outputs `models/wro_model.onnx` which is utilized by `wro_driver.py` during inference.
