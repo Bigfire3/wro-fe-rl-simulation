@@ -64,6 +64,6 @@ The agent is trained using a **2-Stage Curriculum Learning** approach to decoupl
 
 ## 🛠️ Key Scripts
 
-*   [wro_gym_env.py](file:///c:/Users/fabia/Documents/WRO_FE_SIM/controllers/wro_driver/wro_gym_env.py): Extends `gymnasium.Env` to interface with the Webots Supervisor. Handles physics resets, obstacle randomization, sensor updates, coordinate transformations, curriculum thresholds, and reward calculation.
-*   [train.py](file:///c:/Users/fabia/Documents/WRO_FE_SIM/controllers/wro_driver/train.py): Runs training using Stable-Baselines3 PPO. Implements automatic checkpoint saving and curriculum-stage transition parameters.
-*   [export_onnx.py](file:///c:/Users/fabia/Documents/WRO_FE_SIM/controllers/wro_driver/export_onnx.py): Serializes the trained PyTorch PPO policy network into a standalone ONNX model for deployment.
+*   [wro_gym_env.py](wro_gym_env.py): Extends `gymnasium.Env` to interface with the Webots Supervisor. Handles physics resets, obstacle randomization, sensor updates, coordinate transformations, curriculum thresholds, and reward calculation.
+*   [train.py](train.py): Runs training using Stable-Baselines3 PPO. Implements automatic checkpoint saving and curriculum-stage transition parameters.
+*   [export_onnx.py](export_onnx.py): Serializes the trained PyTorch PPO policy network into a standalone ONNX model for deployment.

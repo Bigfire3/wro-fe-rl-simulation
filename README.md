@@ -37,13 +37,13 @@ graph LR
     Stage4 -.->|Feedback Loop| Stage1
 ```
 
-Detailed documentation of coordinate transforms, localization mathematics, and mapping algorithms can be found in [docs/README.md](file:///c:/Users/fabia/Documents/WRO_FE_SIM/docs/README.md).
+Detailed documentation of coordinate transforms, localization mathematics, and mapping algorithms can be found in [docs/README.md](docs/README.md).
 
 ---
 
 ## ✨ Key Technical Highlights
 
-*   **Curriculum Reinforcement Learning:** Trained using **PPO (Stable-Baselines3)** on a custom **Gymnasium** environment (see the detailed [wro_driver README](file:///c:/Users/fabia/Documents/WRO_FE_SIM/controllers/wro_driver/README.md) for specs on the 15D observation vector and reward shaping). The agent transitions from **Stage 1 (Safety focus)**, which teaches lane-keeping and basic driving at a constant speed, to **Stage 2 (Performance focus)**, optimizing lap times with variable speed control and curve-cutting.
+*   **Curriculum Reinforcement Learning:** Trained using **PPO (Stable-Baselines3)** on a custom **Gymnasium** environment (see the detailed [wro_driver README](controllers/wro_driver/README.md) for specs on the 15D observation vector and reward shaping). The agent transitions from **Stage 1 (Safety focus)**, which teaches lane-keeping and basic driving at a constant speed, to **Stage 2 (Performance focus)**, optimizing lap times with variable speed control and curve-cutting.
 *   **Translation-Only ICP:** Scan-to-map matching via a fast 3-iteration Iterative Closest Point algorithm to maintain an accurate estimate of the robot's local pose `(x, y, yaw)`.
 *   **Dynamic Obstacle Mapping:** Clusters LiDAR outliers (representing the obstacle boxes) and filters them dynamically. Implements a ray-casting visibility decay method to fade out obstacles once they are no longer in the vehicle's line-of-sight.
 *   **Template Matching for Initial Localization:** Calibrates the robot's initial pose `(x, y, yaw)` and driving direction (`CW`/`CCW`) using template matching on the start corridor, providing a robust initialization for the continuous ICP tracking loop.
@@ -52,15 +52,15 @@ Detailed documentation of coordinate transforms, localization mathematics, and m
 
 ## 📂 Project Directory Structure
 
-*   [controllers/wro_driver/](file:///c:/Users/fabia/Documents/WRO_FE_SIM/controllers/wro_driver/): Core autonomy software.
+*   [controllers/wro_driver/](controllers/wro_driver/): Core autonomy software.
     *   `wro_gym_env.py`: Gymnasium reinforcement learning environment wrapper.
     *   `train.py`: Training script for PPO with curriculum stage support.
     *   `export_onnx.py`: Utility script to export trained Stable-Baselines3 policies to ONNX.
     *   `wro_driver.py`: Webots supervisor node executing the ONNX model inference.
     *   `wro_core/`: Auxiliary estimation, perception, planning, and control modules.
-*   [docs/](file:///c:/Users/fabia/Documents/WRO_FE_SIM/docs/): Technical documentation and visual assets.
-*   [models/](file:///c:/Users/fabia/Documents/WRO_FE_SIM/models/): Exported ONNX model configurations (`wro_model.onnx`).
-*   [worlds/](file:///c:/Users/fabia/Documents/WRO_FE_SIM/worlds/): Simulation arenas (`track.wbt` for testing, `track_training.wbt` for training).
+*   [docs/](docs/): Technical documentation and visual assets.
+*   [models/](models/): Exported ONNX model configurations (`wro_model.onnx`).
+*   [worlds/](worlds/): Simulation arenas (`track.wbt` for testing, `track_training.wbt` for training).
 
 ---
 
