@@ -11,7 +11,7 @@ WorldInfo {
   contactProperties [
     ContactProperties {
       coulombFriction [
-        2
+        3
       ]
       bounce 0
       softCFM 0.0001
@@ -172,7 +172,7 @@ SolidBox {
 AckermannVehicle {
   translation -0.231441 -0.67067 0.0300003
   rotation 0 0 1 -5.307179586466759e-06
-  controller "keyboard_driver"
+  controller "wro_driver"
   supervisor TRUE
   trackFront 0.12
   trackRear 0.12
