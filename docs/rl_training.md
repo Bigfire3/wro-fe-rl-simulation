@@ -70,6 +70,33 @@ The agent is trained using a **2-Stage Curriculum Learning** approach to decoupl
 
 ---
 
+## ⚙️ PPO Hyperparameter Configuration
+
+To ensure reproducibility, the PPO training hyperparameters are centralized in [config.py](file:///c:/Users/fabia/Documents/WRO_FE_SIM/controllers/wro_driver/wro_core/config.py). These values are read dynamically by [train.py](file:///c:/Users/fabia/Documents/WRO_FE_SIM/controllers/wro_driver/train.py) during model initialization and continued training.
+
+### Base Training Hyperparameters
+| Hyperparameter | Value | Description |
+| :--- | :--- | :--- |
+| **Learning Rate** | `3e-4` | Learning rate for the Adam optimizer |
+| **Gamma ($\gamma$)** | `0.995` | Discount factor for long-horizon planning and strategic corner-cutting |
+| **Batch Size** | `256` | Minibatch size for gradient updates |
+| **Entropy Coefficient (`ent_coef`)** | `0.005` | Lowered to prevent standard deviation explosion and policy collapse |
+| **Steps (`n_steps`)** | `4096` | Steps per environment rollup (doubled for stable gradient estimation) |
+| **Epochs (`n_epochs`)** | `15` | Number of gradient updates per batch |
+| **GAE Lambda ($\lambda$)** | `0.95` | Generalized Advantage Estimator parameter |
+| **Clip Range** | `0.2` | PPO surrogate objective clipping parameter |
+| **Value Function Coeff (`vf_coef`)** | `1.0` | Value function loss coefficient to maintain value prediction accuracy |
+| **Network Architecture** | `pi: [128, 128], vf: [256, 128]` | Separate policy and larger value networks for value fitting |
+
+### Continued Training Hyperparameters (`--continue-training` / `-c`)
+| Hyperparameter | Value | Description |
+| :--- | :--- | :--- |
+| **Learning Rate** | `3e-4` | Learning rate for the optimizer |
+| **Entropy Coefficient (`ent_coef`)** | `0.01` | Slightly higher value to boost exploration under new reward weights |
+| **Exploration Noise (`log_std`)** | `-1.2` | Reset noise standard deviation to $\approx 0.3$ (was $\approx 0.5$) |
+
+---
+
 ## 🚀 How to Start and Manage Your Own Training
 
 To train your own Reinforcement Learning model from scratch, follow these instructions.

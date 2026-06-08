@@ -8,6 +8,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 # Ensure the script directory is in Python path to import wro_gym_env
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from wro_gym_env import WebotsWroEnv
+from wro_core import config
 
 class TrainingAbortException(Exception):
     """Custom exception raised to abort training without saving."""
@@ -96,14 +97,14 @@ def main():
             model_save_path,
             env=env,
             tensorboard_log=tb_log,
-            ent_coef=0.01,       # Lowered to prevent standard deviation explosion (was 0.04)
-            learning_rate=3e-4
+            ent_coef=config.PPO_CONTINUE_ENT_COEF,
+            learning_rate=config.PPO_CONTINUE_LEARNING_RATE
         )
-        # Reset exploration noise with standard deviation of 0.3 to force exploration of faster steering without destabilizing the policy
+        # Reset exploration noise to force exploration of faster steering without destabilizing the policy
         import torch
         with torch.no_grad():
-            model.policy.log_std.fill_(-1.2)  # Reset std to exp(-1.2) ≈ 0.3 (was -0.693 ≈ 0.5)
-        print("Explorations-Rauschen (log_std) erfolgreich auf -1.2 (std ≈ 0.3) zurückgesetzt!")
+            model.policy.log_std.fill_(config.PPO_CONTINUE_LOG_STD)
+        print(f"Explorations-Rauschen (log_std) erfolgreich auf {config.PPO_CONTINUE_LOG_STD} (std ≈ 0.3) zurückgesetzt!")
     else:
         if args.continue_training:
             print(f"[Warning] Kein Modell unter '{model_zip_path}' gefunden. Starte neues Training von vorne.")
@@ -111,19 +112,19 @@ def main():
         model = PPO(
             "MlpPolicy",
             env,
-            learning_rate=3e-4,
-            n_steps=4096,             # Doubled for more stable gradient estimates
-            batch_size=256,           # Larger batches for better statistics
-            n_epochs=15,              # More passes over each batch
-            gamma=0.995,              # Long-horizon planning for strategic corner-cutting
-            gae_lambda=0.95,
-            clip_range=0.2,
-            ent_coef=0.005,           # Lowered to prevent standard deviation explosion (was 0.02)
-            vf_coef=1.0,              # Stronger value loss weight (fixes explained_var=0.29)
+            learning_rate=config.PPO_LEARNING_RATE,
+            n_steps=config.PPO_N_STEPS,
+            batch_size=config.PPO_BATCH_SIZE,
+            n_epochs=config.PPO_N_EPOCHS,
+            gamma=config.PPO_GAMMA,
+            gae_lambda=config.PPO_GAE_LAMBDA,
+            clip_range=config.PPO_CLIP_RANGE,
+            ent_coef=config.PPO_ENT_COEF,
+            vf_coef=config.PPO_VF_COEF,
             verbose=1,
             tensorboard_log=tb_log,
             policy_kwargs=dict(
-                net_arch=dict(pi=[128, 128], vf=[256, 128])  # Separate, larger value network
+                net_arch=config.PPO_NET_ARCH
             )
         )
     
