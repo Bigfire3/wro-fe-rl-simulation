@@ -328,9 +328,9 @@ class ObstacleMapper:
                 obs.votes_green += 1
                 
             # Temporaler Akkumulator / Lock
-            if obs.votes_red >= 10:
+            if obs.votes_red >= 3:
                 obs.color = "red"
-            elif obs.votes_green >= 10:
+            elif obs.votes_green >= 3:
                 obs.color = "green"
 
     def render_camera(self, camera_image, robot_pose):

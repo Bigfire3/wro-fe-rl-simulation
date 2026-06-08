@@ -5,7 +5,7 @@ import numpy as np
 from . import config
 from . import geometry
 
-def compute_observation_vector(pose, obstacles, driving_direction, smoothed_steering, ego_v_x):
+def compute_observation_vector(pose, obstacles, driving_direction, last_steering, ego_v_x):
     """
     Computes the 14-dimensional observation vector for the WRO agent.
     
@@ -94,9 +94,9 @@ def compute_observation_vector(pose, obstacles, driving_direction, smoothed_stee
         
         # Filter:
         # - Obstacle is on our track corridor (within 0.8m of centerline)
-        # - Obstacle is ahead of the robot along the path (0.0 < s_dist <= 2.2m)
+        # - Obstacle is ahead of the robot along the path (0.0 < s_dist <= 3.0m)
         # - Obstacle is in front of the robot locally (x_loc > 0.0)
-        if obs_path_dist <= 0.8 and 0.0 < s_dist <= 2.2 and x_loc > 0.0:
+        if obs_path_dist <= 0.8 and 0.0 < s_dist <= 3.0 and x_loc > 0.0:
             color_val = 1.0 if obs.color == "green" else -1.0 if obs.color == "red" else 0.0
             valid_obstacles.append({
                 "x_loc": x_loc,
@@ -111,7 +111,7 @@ def compute_observation_vector(pose, obstacles, driving_direction, smoothed_stee
     # Build raw observation vector (15 elements)
     raw_obs = np.array([
         ego_v_x,
-        smoothed_steering,
+        last_steering,
         diff_yaw,
         inner_y_40,
         inner_y_100,
@@ -120,11 +120,11 @@ def compute_observation_vector(pose, obstacles, driving_direction, smoothed_stee
         corner_x_loc,
         corner_y_loc,
         # Obstacle 1
-        valid_obstacles[0]["x_loc"] if len(valid_obstacles) > 0 else 2.0,
+        valid_obstacles[0]["x_loc"] if len(valid_obstacles) > 0 else 3.0,
         valid_obstacles[0]["y_loc"] if len(valid_obstacles) > 0 else 0.0,
         valid_obstacles[0]["color"] if len(valid_obstacles) > 0 else 0.0,
         # Obstacle 2
-        valid_obstacles[1]["x_loc"] if len(valid_obstacles) > 1 else 2.0,
+        valid_obstacles[1]["x_loc"] if len(valid_obstacles) > 1 else 3.0,
         valid_obstacles[1]["y_loc"] if len(valid_obstacles) > 1 else 0.0,
         valid_obstacles[1]["color"] if len(valid_obstacles) > 1 else 0.0
     ], dtype=np.float32)
@@ -173,8 +173,8 @@ class RLPlanner:
         act_steer_delta = np.clip(action[0], -1.0, 1.0)
         act_speed_delta = np.clip(action[1], -1.0, 1.0)
         
-        # Accumulate steering: max change 0.2 rad per step
-        self.current_steering += act_steer_delta * 0.2
+        # Accumulate steering: max change per step configured in config
+        self.current_steering += act_steer_delta * config.STEERING_DELTA_LIMIT
         self.current_steering = np.clip(self.current_steering, -config.MAX_STEERING, config.MAX_STEERING)
         
         # Accumulate speed: max change 10.0 rad/s per step
