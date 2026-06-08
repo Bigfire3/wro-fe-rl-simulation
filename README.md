@@ -12,7 +12,7 @@
 An autonomous racing robot for the **WRO (World Robot Olympiad) Future Engineers** competition, trained using **Deep Reinforcement Learning (PPO)** in a custom **Webots simulation**. The control pipeline features real-time **ICP-based localization** and **dynamic obstacle mapping** with ray-cast decay.
 
 <p align="center">
-  <img src="docs/media/showcase.webp" width="75%" alt="Synchronized Autonomy Dashboard" />
+  <img src="docs/media/Loc_Model_5.gif" width="60%" alt="ICP Localization & Path Visualizer" />
 </p>
 
 ---

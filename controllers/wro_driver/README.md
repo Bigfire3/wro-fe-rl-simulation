@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="../../docs/media/Obs_Model_5.gif" width="60%" alt="Gym Environment Observation Debugger" />
+</p>
+
 # Gymnasium Reinforcement Learning Environment (`WebotsWroEnv`)
 
 This directory houses the core Gymnasium environment wrapper (`wro_gym_env.py`) interfacing with the Webots robot simulation, along with training and evaluation tools.
