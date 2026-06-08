@@ -30,15 +30,11 @@ Now, as a **6th-semester Robotics student**, I wanted to revisit this challenge 
 The control loop is executed sequentially in a **4-Stage Software Pipeline** at every simulation step:
 
 ```mermaid
-graph TD
-    Start([Start of Control Loop]) --> Step[Frame Step: robot.step]
-    Step --> Stage1[STAGE 1: PERCEPTION<br/>- Read Lidar, IMU & Camera<br/>- Filter sensor outliers]
-    Stage1 --> Stage2[STAGE 2: ESTIMATION<br/>- Calibrate initial pose via Template Matching<br/>- Track pose via 3-Iteration Translation-Only ICP<br/>- Cluster obstacles & track with Low-Pass filter]
-    Stage2 --> Stage3[STAGE 3: PLANNING<br/>- Compute 15D Observation vector<br/>- Evaluate ONNX Policy for Speed & Steer increments]
-    Stage3 --> Stage4[STAGE 4: CONTROL<br/>- Compute Ackermann steering kinematics<br/>- Send target motor velocities]
-    Stage4 --> Check{Simulation Active?}
-    Check -- Yes --> Step
-    Check -- No --> End([End Simulation])
+graph LR
+    Stage1[STAGE 1: PERCEPTION] --> Stage2[STAGE 2: ESTIMATION]
+    Stage2 --> Stage3[STAGE 3: PLANNING]
+    Stage3 --> Stage4[STAGE 4: CONTROL]
+    Stage4 -.->|Feedback Loop| Stage1
 ```
 
 Detailed documentation of coordinate transforms, localization mathematics, and mapping algorithms can be found in [docs/architecture.md](file:///c:/Users/fabia/Documents/WRO_FE_SIM/docs/architecture.md).
@@ -47,10 +43,10 @@ Detailed documentation of coordinate transforms, localization mathematics, and m
 
 ## ✨ Key Technical Highlights
 
-*   **Template Matching for Initial Localization:** Calibrates the robot's initial pose `(x, y, yaw)` and driving direction (`CW`/`CCW`) using template matching on the start corridor, providing a robust initialization for the continuous ICP tracking loop.
 *   **Curriculum Reinforcement Learning:** Trained using **PPO (Stable-Baselines3)** on a custom **Gymnasium** environment. The agent transitions from **Stage 1 (Safety focus)**, which teaches lane-keeping and basic driving at a constant speed, to **Stage 2 (Performance focus)**, optimizing lap times with variable speed control and curve-cutting.
 *   **Translation-Only ICP:** Scan-to-map matching via a fast 3-iteration Iterative Closest Point algorithm to maintain an accurate estimate of the robot's local pose `(x, y, yaw)`.
 *   **Dynamic Obstacle Mapping:** Clusters LiDAR outliers (representing the obstacle boxes) and filters them dynamically. Implements a ray-casting visibility decay method to fade out obstacles once they are no longer in the vehicle's line-of-sight.
+*   **Template Matching for Initial Localization:** Calibrates the robot's initial pose `(x, y, yaw)` and driving direction (`CW`/`CCW`) using template matching on the start corridor, providing a robust initialization for the continuous ICP tracking loop.
 
 ---
 
