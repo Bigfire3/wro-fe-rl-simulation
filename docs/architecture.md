@@ -19,7 +19,6 @@ Die Planungslogik ist dabei vollständig in **STAGE 3: PLANNING** gekapselt. Die
 * **[ STAGE 4: CONTROL ]** (Regelung)
   * *Verantwortung:* Berechnung der konkreten Stellgrößen für die Aktuatoren (Ackermann-Lenkgeometrie für die Servomotoren, Soll-Geschwindigkeiten für die Antriebsmotoren) basierend auf den Vorgaben aus Stage 3.
   * *Features:*
-    * **Elektronisches Differenzial**: Berechnet unterschiedliche Sollgeschwindigkeiten für das linke und rechte Hinterrad basierend auf dem aktuellen Lenkwinkel (kurveninneres Rad fährt langsamer, kurvenäußeres Rad schneller).
     * **Direkte Ansteuerung**: Verzicht auf Tiefpassfilter für maximale Reaktionsfähigkeit.
   * *Einschränkung:* Diese Stufe arbeitet rein zustandsunabhängig und führt lediglich mathematische Regelungsberechnungen und Sicherheitsbegrenzungen (Clamping) durch.
 
