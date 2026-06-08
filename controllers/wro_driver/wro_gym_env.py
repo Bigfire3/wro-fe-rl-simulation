@@ -118,6 +118,14 @@ class WebotsWroEnv(gym.Env):
         self.current_speed = 0.0
         self.prev_steer_delta_action = 0.0
         self.cumulative_progress = 0.0
+        self.laps_completed = 0
+        self.last_lap_end_step = 0
+        
+        # Configure how many laps should be driven in each curriculum stage
+        self.laps_per_stage = {
+            1: 2,  # Stage 1: 2 laps (change to 1 or 2 as needed)
+            2: 2,  # Stage 2: 2 laps
+        }
         
         # Variables stored for visualization/rendering
         self.raw_obs = np.zeros(15, dtype=np.float32)
@@ -149,8 +157,8 @@ class WebotsWroEnv(gym.Env):
         self.steer_right.setPosition(0.0)
         
         # Random start pose
-        start_x_est = self.np_random.uniform(1.2, 1.8)
-        start_y_est = self.np_random.uniform(0.2, 0.8)
+        start_x_est = self.np_random.uniform(1.0, 2.0)
+        start_y_est = self.np_random.uniform(0.25, 0.75)
         if self.curriculum_stage == 1:
             base_yaw = self.np_random.choice([-np.pi / 2.0, np.pi / 2.0])
             yaw_est = base_yaw + self.np_random.uniform(-0.1, 0.1)
@@ -216,6 +224,8 @@ class WebotsWroEnv(gym.Env):
         self.prev_steer_delta_action = 0.0
         self.cumulative_progress = 0.0
         self.total_steps = 0
+        self.laps_completed = 0
+        self.last_lap_end_step = 0
         
         obs = self._get_obs()
         self.prev_path_s = self.current_path_s
@@ -247,7 +257,7 @@ class WebotsWroEnv(gym.Env):
             pose=(rx, ry, ryaw),
             obstacles=self.estimator.obstacle_mapper.obstacles,
             driving_direction=self.estimator.driving_direction,
-            smoothed_steering=self.car_controller.smoothed_steering,
+            last_steering=self.car_controller.last_steering,
             ego_v_x=ego_v_x
         )
         self.raw_obs = result[0]
@@ -266,8 +276,8 @@ class WebotsWroEnv(gym.Env):
 
     def step(self, action):
         # 1. Apply action (accumulate delta steering and speed)
-        # Steering delta: action[0] in [-1.0, 1.0], mapped to [-0.2, 0.2] rad
-        self.current_steering += float(action[0]) * 0.2
+        # Steering delta: action[0] in [-1.0, 1.0], mapped to [-config.STEERING_DELTA_LIMIT, config.STEERING_DELTA_LIMIT] rad
+        self.current_steering += float(action[0]) * config.STEERING_DELTA_LIMIT
         self.current_steering = np.clip(self.current_steering, -config.MAX_STEERING, config.MAX_STEERING)
         target_steering = self.current_steering
         
@@ -279,7 +289,7 @@ class WebotsWroEnv(gym.Env):
             # Stage 2: variable speed control delta: action[1] in [-1.0, 1.0], mapped to [-10.0, 10.0] rad/s
             self.current_speed += float(action[1]) * 10.0
             self.current_speed = np.clip(self.current_speed, 0.0, config.MAX_MOTOR_VELOCITY)
-            target_speed = self.current_speed
+        target_speed = self.current_speed
         
         # 4. Control
         self.car_controller.apply(
@@ -349,12 +359,12 @@ class WebotsWroEnv(gym.Env):
             # Remove steering penalty at speed for Stage 2 to allow aggressive cornering
             stage2_steer_penalty = 0.0
             
-            # Increased step penalty – makes time expensive, forces faster driving
-            stage2_step_penalty = -1.8
+            # Increased step penalty – makes time expensive, forces faster driving (was -1.8)
+            stage2_step_penalty = -3.0
             
             # Reduced smoothness penalty for agile cornering in Stage 2
             stage2_smoothness_penalty = -0.08 * (steer_delta_diff ** 2)
-            
+        
             reward = progress_reward + speed_reward + stage2_step_penalty + stage2_smoothness_penalty + stage2_steer_penalty
         
         terminated = False
@@ -380,16 +390,30 @@ class WebotsWroEnv(gym.Env):
             print("[Gym Env] COLLISION detected! Resetting.")
             
         # Lap completion check based on cumulative progress
-        if self.cumulative_progress >= (total_len - 0.2):
+        target_laps = self.laps_per_stage.get(self.curriculum_stage, 1)
+        next_lap = self.laps_completed + 1
+        if next_lap <= target_laps and self.cumulative_progress >= (next_lap * total_len - 0.2):
+            self.laps_completed = next_lap
+            
+            # Clear passed obstacle IDs so they can be detected and passed correctly again in the next lap
+            if next_lap < target_laps:
+                self.passed_obstacle_ids.clear()
+            
             if self.curriculum_stage == 1:
                 reward += 150.0
-                print(f"[Gym Env] LAP completed ({self.estimator.driving_direction})! Terminating episode. Bonus reward +150.0")
+                print(f"[Gym Env] LAP {next_lap} completed ({self.estimator.driving_direction})! Bonus reward +150.0")
             else:
-                # Time-based bonus: faster laps get exponentially more reward
-                time_bonus = max(50.0, 400.0 - self.total_steps * 4.0)
+                lap_steps = self.total_steps - self.last_lap_end_step
+                time_bonus = max(50.0, 400.0 - lap_steps * 4.0)
                 reward += time_bonus
-                print(f"[Gym Env] LAP completed ({self.estimator.driving_direction})! Terminating episode. Time bonus +{time_bonus:.0f} ({self.total_steps} steps)")
-            terminated = True
+                print(f"[Gym Env] LAP {next_lap} completed ({self.estimator.driving_direction})! Time bonus +{time_bonus:.0f} ({lap_steps} steps)")
+            
+            # Update the last lap end step to this step for the next lap's relative calculation
+            self.last_lap_end_step = self.total_steps
+            
+            if self.laps_completed >= target_laps:
+                print(f"[Gym Env] Episode finished! All {target_laps} laps completed successfully.")
+                terminated = True
                 
         # Stagnation check
         if ego_v_x < 0.01:
@@ -444,7 +468,8 @@ class WebotsWroEnv(gym.Env):
                         print(f"[Gym Env] GREEN Obstacle passed INCORRECTLY! Resetting.")
                         
         self.total_steps += 1
-        if self.total_steps > 1000:
+        max_steps = target_laps * 800
+        if self.total_steps > max_steps:
             truncated = True
             
         info = {

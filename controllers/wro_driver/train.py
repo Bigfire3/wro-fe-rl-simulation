@@ -96,14 +96,14 @@ def main():
             model_save_path,
             env=env,
             tensorboard_log=tb_log,
-            ent_coef=0.02,        # Moderate entropy boost for re-exploration (was 0.08 – too aggressive)
+            ent_coef=0.01,       # Lowered to prevent standard deviation explosion (was 0.04)
             learning_rate=3e-4
         )
-        # Reset exploration noise with moderate standard deviation
+        # Reset exploration noise with standard deviation of 0.3 to force exploration of faster steering without destabilizing the policy
         import torch
         with torch.no_grad():
-            model.policy.log_std.fill_(-1.0)  # Reset std to exp(-1.0) ≈ 0.37 (was -0.5 ≈ 0.60 – too noisy)
-        print("Explorations-Rauschen (log_std) erfolgreich auf -1.0 zurückgesetzt!")
+            model.policy.log_std.fill_(-1.2)  # Reset std to exp(-1.2) ≈ 0.3 (was -0.693 ≈ 0.5)
+        print("Explorations-Rauschen (log_std) erfolgreich auf -1.2 (std ≈ 0.3) zurückgesetzt!")
     else:
         if args.continue_training:
             print(f"[Warning] Kein Modell unter '{model_zip_path}' gefunden. Starte neues Training von vorne.")
@@ -118,7 +118,7 @@ def main():
             gamma=0.995,              # Long-horizon planning for strategic corner-cutting
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.005,           # Low entropy – avoids wild exploration (std was 6.47)
+            ent_coef=0.005,           # Lowered to prevent standard deviation explosion (was 0.02)
             vf_coef=1.0,              # Stronger value loss weight (fixes explained_var=0.29)
             verbose=1,
             tensorboard_log=tb_log,
