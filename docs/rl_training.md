@@ -97,7 +97,7 @@ python controllers/wro_driver/train.py [parameters]
 You can customize the training run using the following command-line flags:
 
 *   `--timesteps <int>`: Total number of training steps (default: `500000`).
-*   `--no-render`: Disables OpenCV window rendering during training. Excluding this flag opens debug visualization windows showing LiDAR inliers/outliers, camera feed, and the current observation vector state.
+*   `--no-render`: Disables OpenCV window rendering during training. Excluding this flag opens debug visualization windows showing LiDAR inliers/outliers, camera feed, and the current observation vector state. (recommended for faster training)
 *   `--continue-training` / `-c`: Continues training an existing checkpoint file (`models/wro_ppo_model.zip`) if it exists. Note that continuing resets the standard deviation of exploration noise (setting `log_std` to `-1.2`, i.e., `std ≈ 0.3`) to promote safe exploration of faster trajectories without policy collapse.
 *   `--stage <1|2>`: Forces a specific curriculum stage (1 or 2). If not specified, standard automatic curriculum logic is used (transits from Stage 1 to Stage 2 at 200,000 steps).
 
