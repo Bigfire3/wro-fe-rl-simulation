@@ -78,7 +78,15 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 3. Training the Agent
+### 3. Running & Training
+
+#### a) Inference (Using the Pre-trained Model)
+The repository already includes a pre-trained model (`models/wro_model.onnx`), allowing you to test the autonomous driving immediately:
+1. Open Webots and load the evaluation world `worlds/track.wbt`.
+2. Press the **Play** button in Webots. The simulator will automatically launch the internal `wro_driver` controller, which loads the pre-trained ONNX model and drives autonomously.
+
+#### b) Training (Train Your Own Model)
+If you want to train your own reinforcement learning model from scratch:
 1. Open Webots and load the training world `worlds/track_training.wbt`.
 2. Ensure the robot's controller in the Scene Tree is set to `<extern>` (to connect to the external Gymnasium environment).
 3. Run the training script in your terminal:
@@ -89,7 +97,3 @@ pip install -r requirements.txt
    ```bash
    tensorboard --logdir=tb_logs
    ```
-
-### 4. Running Simulation & Inference
-1. Open Webots and load the world `worlds/track.wbt`.
-2. Press the **Play** button in Webots. The simulator will automatically launch the internal `wro_driver` controller, which loads the exported ONNX model (`models/wro_model.onnx`) and performs autonomous driving.
