@@ -12,8 +12,7 @@
 An autonomous racing robot for the **WRO (World Robot Olympiad) Future Engineers** competition, trained using **Deep Reinforcement Learning (PPO)** in a custom **Webots simulation**. The control pipeline features real-time **ICP-based localization** and **dynamic obstacle mapping** with ray-cast decay.
 
 <p align="center">
-  <img src="docs/media/Loc_Model_5.gif" width="48%" alt="ICP Localization & Path Visualizer" />
-  <img src="docs/media/Obs_Model_5.gif" width="48%" alt="Observation Debugger" />
+  <img src="docs/media/showcase.webp" width="75%" alt="Synchronized Autonomy Dashboard" />
 </p>
 
 ---
@@ -51,7 +50,6 @@ Detailed documentation of coordinate transforms, localization mathematics, and m
 *   **Curriculum Reinforcement Learning:** Trained using **PPO (Stable-Baselines3)** on a custom **Gymnasium** environment. The agent transitions from **Stage 1 (Safety focus)**, which teaches lane-keeping and basic driving at a constant speed, to **Stage 2 (Performance focus)**, optimizing lap times with variable speed control and curve-cutting.
 *   **Translation-Only ICP:** Scan-to-map matching via a fast 3-iteration Iterative Closest Point algorithm to maintain an accurate estimate of the robot's local pose `(x, y, yaw)`.
 *   **Dynamic Obstacle Mapping:** Clusters LiDAR outliers (representing the obstacle boxes) and filters them dynamically. Implements a ray-casting visibility decay method to fade out obstacles once they are no longer in the vehicle's line-of-sight.
-*   **Path Coloration Visualizer:** Draws a live trajectory path colored based on current velocity (from slow cyan/blue to fast orange/red) with an on-screen velocity legend.
 
 ---
 
