@@ -2,7 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org)
 [![Gymnasium](https://img.shields.io/badge/Gymnasium-v0.29-green.svg)](https://gymnasium.farama.org/)
-[![Webots](https://img.shields.io/badge/Webots-R2023b-red.svg)](https://cyberbotics.com/)
+[![Webots](https://img.shields.io/badge/Webots-R2025b-red.svg)](https://cyberbotics.com/)
 [![ONNX](https://img.shields.io/badge/ONNX-runtime-orange.svg)](https://onnxruntime.ai/)
 
 An autonomous racing robot for the **WRO (World Robot Olympiad) Future Engineers** competition, trained using **Deep Reinforcement Learning (PPO)** in a custom **Webots simulation**. The control pipeline features real-time **ICP-based localization**, **dynamic obstacle mapping** with ray-cast decay, and an **electronic differential**.
