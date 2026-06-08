@@ -40,20 +40,20 @@ The agent is trained using a **2-Stage Curriculum Learning** approach to decoupl
 
 ### Curriculum Stage 1: Safety & Line-Keeping
 *   **Focus:** Drive safely around the track at a constant slow speed ($30\%$ of maximum motor velocity), ensuring correct obstacle bypass sides.
-*   **Speed Reward:** $5.0 \times \text{speed\_ratio}^2$.
-*   **Steering Penalties:** Penalisations on absolute steering angle at speed to prevent erratic swerving.
+*   **Speed Reward:** $5.0 \times \text{speed-ratio}^2$.
+*   **Steering Penalties:** Penalisations on absolute steering angle at speed to prevent swerving.
 *   **Reward Equation:**
-    $$R_{Stage1} = R_{progress} + R_{speed} + P_{step} + P_{smooth} + P_{steer\_amp}$$
+    $$R_{\text{Stage1}} = R_{\text{progress}} + R_{\text{speed}} + P_{\text{step}} + P_{\text{smooth}} + P_{\text{steer-amp}}$$
 *   **Episode Termination:** Triggered instantly on any collision (absolute penalty: $-50.0$) or on passing an obstacle on the incorrect side (absolute penalty: $-50.0$).
 
 ### Curriculum Stage 2: Performance & Obstacle Avoidance
 *   **Focus:** Maximize speed, optimize trajectories (cut corners), and dodge obstacles dynamically under active velocity control.
-*   **Speed Reward:** $10.0 \times \text{speed\_ratio}^2$ (quadratic encouragement to drive at the limits).
-*   **Lap Completion Time Bonus:** Time-based reward awarded upon completing a lap ($R_{bonus} = \max(50.0, 400.0 - 4.0 \times \text{lap\_steps})$) to reward speed.
+*   **Speed Reward:** $10.0 \times \text{speed-ratio}^2$ (quadratic encouragement to drive at the limits).
+*   **Lap Completion Time Bonus:** Time-based reward awarded upon completing a lap ($R_{\text{bonus}} = \max(50.0, 400.0 - 4.0 \times \text{lap-steps})$) to reward speed.
 *   **Reduced Steer/Smooth Penalties:** Allows agile, sudden maneuvers for corner-cutting and dodging.
-*   **Heavy Step Penalty:** $P_{step} = -3.0$ per step, rendering elapsed time expensive.
+*   **Heavy Step Penalty:** $P_{\text{step}} = -3.0$ per step, rendering elapsed time expensive.
 *   **Reward Equation:**
-    $$R_{Stage2} = R_{progress} + R_{speed\_quad} + P_{step\_high} + P_{smooth\_low}$$
+    $$R_{\text{Stage2}} = R_{\text{progress}} + R_{\text{speed-quad}} + P_{\text{step-high}} + P_{\text{smooth-low}}$$
 *   **Episode Termination:** Collision penalty is reduced to a smaller additive penalty ($-40.0$) rather than hard termination. This encourages the agent to aggressively explore the limits of the track walls during speed optimization.
 
 ---
