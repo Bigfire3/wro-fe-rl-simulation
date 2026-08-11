@@ -108,7 +108,7 @@ flowchart LR
     M --> A[Motor + Servo PWM]
     E[Not-Aus / E-Stop] --> M
     M --> F[Sicherer Halt / Aktuator-Limits]
-@end
+@mermaid
 
 ### 4.1 Aufgabenverteilung
 
@@ -209,7 +209,7 @@ stateDiagram-v2
     Driving --> SafeStop: Kritischer Fehler / E-Stop
     Degraded --> SafeStop: Fehler eskaliert
     SafeStop --> Standby: Reset & Fehlerbehebung
-@end
+@mermaid
 
 - **Boot:** Systemstart, Speicherprüfungen und Hardware-Initialisierung.
 - **Self-Test & Calibration:** Überprüfung der Sensorik/Aktuierung und Nullpunkt-Kalibrierung.
