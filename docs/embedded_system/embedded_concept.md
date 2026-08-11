@@ -19,9 +19,8 @@ import:   https://raw.githubusercontent.com/LiaTemplates/mermaid_template/0.1.4/
 | Parameter | Kurs- / Projektinformationen |
 | --- | --- |
 | **Projekt:** | `WRO Future Engineers -- Sim-to-Real Autonomous Racing Robot` |
-| **Modul:** | `Softwareentwicklung für Eingebettete Systeme / RL Simulation` |
+| **Modul:** | `Softwareentwicklung für Eingebettete Systeme` |
 | **Hochschule:** | `Technische Universität Bergakademie Freiberg` |
-| **Inhalte:** | `Embedded Architecture, Timing-Budgets, Edge-AI Deployment, Safety Supervision & Dependability` |
 | **GitHub:** | [Bigfire3/wro-fe-rl-simulation](https://github.com/Bigfire3/wro-fe-rl-simulation/blob/main/docs/embedded_system/embedded_concept.md) |
 | **Autoren:** | Fabian Zänker |
 
@@ -50,7 +49,7 @@ import:   https://raw.githubusercontent.com/LiaTemplates/mermaid_template/0.1.4/
 | **Hauptengpass** | Keine zeitlichen Restriktionen | Perzeption & ICP-Lokalisierung (nicht die Policy selbst!) |
 | **Geschwindigkeit!** | Direkt aus Physik-Engine / Supervisor | Schätzung via Encodern + IMU (Aktive Redundanz, ADC, Interrupts, Fusionsfilter) |
 
-### 1.1 Was ich in der Simulation für die Robustheit noch tun kann
+Was ich in der Simulation für die Robustheit noch verbessern könnte:
 - **Domain Randomization:** Variation von Reibwerten, Massen, Trägheitsmomenten
 - **Stör- & Verzögerungsmodelle:** Künstliches Sensorrauschen & Kommunikations-Latenzen
 - **Sensorausfall-Szenarien:** Simulation von Sensor-Dropouts
