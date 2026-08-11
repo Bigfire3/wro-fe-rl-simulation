@@ -46,7 +46,6 @@ import:   https://raw.githubusercontent.com/LiaTemplates/mermaid_template/0.1.4/
 | **Sensorik** | Rauschfrei, exakt, synchrone Zeitstempel | Rauschen, Bias, Latenzen, Dropouts, asynchrone Zeitstempel |
 | **Aktuatorik** | Ideale Lenkwinkel- & Drehmoment-Umsetzung | Totzonen, Spiel (Backlash), Reifenschlupf, PWM-Treiber |
 | **Ressourcen** | Unbegrenzter PC (Python, NumPy, PyTorch) | Begrenzter Flash, SRAM, Rechenleistung, Energieressourcen |
-| **Hauptengpass** | Keine zeitlichen Restriktionen | Perzeption & ICP-Lokalisierung (nicht die Policy selbst!) |
 | **Geschwindigkeit!** | Direkt aus Physik-Engine / Supervisor | Schätzung via Encodern + IMU (Aktive Redundanz, ADC, Interrupts, Fusionsfilter) |
 
 Was ich in der Simulation für die Robustheit noch verbessern könnte:
@@ -67,20 +66,20 @@ Was ich in der Simulation für die Robustheit noch verbessern könnte:
 | Phase | Zeitbudget | Hauptaufgabe |
 | --- | ---: | --- |
 | **1. Sensor-Sync** | $15\,\text{ms}$ | Zeitstempel-Zuordnung & Gültigkeits-Check (DMA/ISR) |
-| **2. Lokalisierung (ICP)** | $40\,\text{ms}$ | Bounded Processing Time (Garantierte obere Schranke für die Ausführungszeit) |
-| **3. Inferenz (ONNX)** | $15\,\text{ms}$ | Mathematisch deterministische PPO-Policy-Berechnung |
+| **2. Lokalisierung (ICP)** | $40\,\text{ms}$ | Bounded Processing Time |
+| **3. Inferenz (ONNX)** | $15\,\text{ms}$ |  deterministische PPO-Policy-Berechnung |
 | **4. Motor- & Lenkansteuerung** | $10\,\text{ms}$ | PWM-Erzeugung & Signalübertragung (CAN/UART) |
 | **5. Jitter-Reserve** | $20\,\text{ms}$ | Puffer für Interrupts, Kontextwechsel & Laufzeitschwankungen |
 
 ### 2.2 Echtzeit-Klassifikation
-- **RL-Policy (Pfadplanung):** Weiche / Feste Echtzeit (Latenz verschlechtert Fahrqualität, verursacht nicht direkt Crash)
+- **RL-Policy:** Weiche / Feste Echtzeit (Latenz verschlechtert Fahrqualität, verursacht nicht direkt Crash)
 - **Sicherheitsfilter / Not-Aus:** Harte Echtzeit (Deterministische Einhaltung von Fahrzeug- & Kollisionsgrenzen)
 
 -----
 
 ## 3. Architekturoptionen & Zielarchitektur
 
-### 3.1 Vergleich der 3 Architektur-Varianten & Ausschlussgründe
+### 3.1 Vergleich der 3 Architektur-Varianten
 
 | Variante | Plattform-Idee | Vorteile | Nachteile / Ausschlussgrund |
 | --- | --- | --- | --- |
@@ -100,7 +99,7 @@ flowchart LR
     subgraph MCU [Sicherheits-Controller - FreeRTOS MCU]
         I[IMU / Encoder] --> M[Sensorerfassung & Fusionsfilter]
         M --> SF[Deterministischer Safety Filter]
-        O <-->|CAN / UART\nCRC · Timeouts| SF
+        O <-->|CAN / UART\nCRC+Timeouts| SF
         SF --> A[Motor & Servo PWM]
         E[Not-Aus Button] --> SF
         SF --> Dis[Hardware-Abschaltpfad]
@@ -146,19 +145,16 @@ flowchart LR
 
 -----
 
-## 5. Edge-AI Deployment & Safety Cage
+## 5. Edge-AI Deployment
 
-### 5.1 Deployment-Pipeline
 $$\text{PyTorch (PC)} \xrightarrow{\text{Export}} \text{ONNX (Float32)} \xrightarrow{\text{Quantisierung}} \text{Int8 C-Code}$$
-
-### 5.2 Ressourcenvergleich (Modellgewichte)
 
 | Format | Speicherbedarf Gewichte | Ziel-Laufzeitumgebung |
 | --- | ---: | --- |
 | **Float32 (Baseline)** | $\approx 74\,\text{KiB}$ | ONNX Runtime (Embedded Linux) |
 | **Int8 (Quantisiert)** | $\approx 18\text{--}19\,\text{KiB}$ | CMSIS-NN (MCU) |
 
-### 5.3 Safety Cage um die Policy
+### 5.1 Safety Cage um die Policy
 - RL-Policy liefert **nur Wunsch-Sollwerte** (*Requested Setpoints*)
 - **Prüfkriterien des Sicherheitsfilters:**
   - Lenkwinkel- & Lenkraten-Begrenzung
@@ -166,11 +162,11 @@ $$\text{PyTorch (PC)} \xrightarrow{\text{Export}} \text{ONNX (Float32)} \xrighta
   - Plausibilitäts-Check ($NaN$- & Ausreißer-Rejektion)
   - **Datenaktualität (Freshness):** Überprüfung, ob Sensordaten neu und nicht veraltet sind
   - **Zeitüberschreitungs-Überwachung (Timeout):** Not-Aus bei Kommunikationsabriss
-  - **Not-Aus (Emergency Stop / E-Stop):** Sofortige Abschaltung im Fehlerfall
+  - **Emergency Stop:** Sofortige Abschaltung im Fehlerfall
 
 -----
 
-## 6. Zustandsautomat für den realen Betrieb (Statechart)
+## 6. Zustandsautomat
 
 ```mermaid @mermaid
 stateDiagram-v2
@@ -186,7 +182,6 @@ stateDiagram-v2
     SafeStop --> Ready: Reset
 ```
 
-### 6.1 States & Roles (Legend)
 - **Boot:** Memory & driver initialization
 - **SelfTest:** Hardware, sensor & voltage checks
 - **Calibration:** Zero-point alignment (IMU/steering) & **initial localization via OpenCV color detection** (start-line detection & driving direction `CW`/`CCW`)
@@ -197,37 +192,38 @@ stateDiagram-v2
 
 -----
 
-## 7. Verifikation & Test-Pyramide
-
-### 7.1 Test-Pyramide für eingebettete Systeme
+## 7. Verifikation & Test-Pyramide (am Projekt)
 
 ```mermaid @mermaid
 flowchart TD
     subgraph Pyramid [Test-Pyramide]
-        HIL_Node["HIL (Spitze)<br>ganzes System, simulierte Umwelt<br>real & teuer, wenige Tests, findet Integrationsfehler"]
-        Target_Node["On-Target / Target (Mitte)<br>echter µC, echte Register (via JTAG/SWD/UART)<br>langsamer, braucht Hardware im Loop"]
-        Host_Node["Host-Tests (Basis - nativ, PC)<br>reine Logik ohne HW, nativ auf dem PC<br>blitzschnell, tausende in CI, findet Logikfehler früh"]
+        HIL_Node["HIL (Spitze)\nganzes System, simulierte Umwelt\nreal und teuer, wenige Tests"]
+        Target_Node["On-Target (Mitte)\nechter µC, echte Register\nlangsamer, braucht Hardware"]
+        Host_Node["Host-Tests (Basis)\nnativ auf dem PC\nblitzschnell, tausende in CI"]
     end
     HIL_Node --> Target_Node
     Target_Node --> Host_Node
 ```
 
-| Stufe | Testumgebung | Eigenschaft & Ziel |
+| Stufe | Projektbeispiel | Was wird getestet? |
 | --- | --- | --- |
-| **HIL (Spitze)** | Ganzes System, simulierte Umwelt | Real & teuer, wenige Tests, findet Integrationsfehler |
-| **On-Target / Target (Mitte)** | Echter $\mu\text{C}$, echte Register (JTAG/SWD/UART) | Langsamer, benötigt Hardware im Loop |
-| **Host-Tests (Basis)** | Reine Logik ohne HW, nativ auf dem PC | Blitzschnell, tausende in CI, findet Logikfehler früh |
+| **Host-Tests (Basis)** | Ackermann-Kinematik, Koordinatentransformationen, $15$D-Normalisierung, Clipping-Logik, ONNX-Referenzausgaben | Reine Mathematik & Logik, kein µC nötig, tausende Tests in CI |
+| **On-Target** | Safety-Filter-Grenzwerte auf STM32, PWM-Timing, ADC-Abtastung, Watchdog-Auslösung, CAN-Frame-Integrität | Echter µC, echte Register via JTAG/SWD, verifiziert Firmware-Verhalten |
+| **HIL (Spitze)** | Aufgebocktes Fahrzeug $\rightarrow$ Langsame Geradeausfahrt $\rightarrow$ Kurven $\rightarrow$ Hindernisse $\rightarrow$ Fehlerinjektion auf Teststrecke | Gesamtsystem mit Leistungsrechner + MCU + Sensorik, findet Integrationsfehler |
 
 -----
 
-## 8. Dependability & Fehlertoleranz
+## 8. Dependability & Fehlertoleranz (am Projekt)
 
-### 8.1 Fehler-Kaskade
-$$\text{Fehlerursache (Fault)} \longrightarrow \text{Systemstörung (Error)} \longrightarrow \text{Dienstausfall (Failure)}$$
+### 8.1 Fehler-Kaskade (Beispiel: IMU-Ausfall)
+$$\underbrace{\text{IMU-Kabelbruch}}_{\text{Fault}} \longrightarrow \underbrace{\text{Fusionsfilter divergiert}}_{\text{Error}} \longrightarrow \underbrace{\text{Fahrzeug verlässt Strecke}}_{\text{Failure}}$$
 
-### 8.2 Schutzmaßnahmen
-- **Hardware-Watchdog:** Automatischer Reset bei Software-Hängern
-- **Heartbeat:** Linux-MCU Kontrollsignal-Überwachung
-- **Informationelle Redundanz:** CRC32, Sequenznummern, Modell-Hashes
-- **Funktionale Redundanz:** Rad-Encoder + IMU Fusionsfilter
-- **Hardware-Abschaltpfad:** Physikalischer Abschaltpfad zur Deaktivierung der Motorbrücke (Fail-Safe)
+### 8.2 Konkrete Schutzmaßnahmen im Projekt
+
+| Maßnahme | Mechanismus im Projekt | Schutzziel |
+| --- | --- | --- |
+| **Hardware-Watchdog** | MCU-Watchdog-Timer, Reset bei ausbleibender Bedienung | Software-Hänger $\rightarrow$ automatischer Neustart |
+| **Heartbeat** | Leistungsrechner sendet periodisches Lebenszeichen an MCU | Erkennung eines Linux-Absturzes oder Kommunikationsabrisses |
+| **Informationelle Redundanz** | CRC32 auf allen CAN/UART-Nachrichten, Sequenznummern, ONNX-Modell-Hash bei Boot | Erkennung von Bitfehlern, verlorenen Paketen, falschem Modell |
+| **Funktionale Redundanz** | Rad-Encoder + IMU liefern unabhängig Geschwindigkeit (Aktive Redundanz) | Plausibilisierung & Schlupferkennung |
+| **Hardware-Abschaltpfad** | MCU-kontrollierter MOSFET trennt Motorbrücke physikalisch | Fail-Safe: Aktuatoren stromlos bei kritischem Fehler |
