@@ -100,7 +100,7 @@ Der Transfer aus der Simulation auf die physische Hardware bringt verschiedene R
 
 Die Systemarchitektur verteilt die Aufgaben auf zwei dedizierte Recheneinheiten, um rechenintensive KI-Aufgaben von deterministischen Sicherheits- und Steuerungsaufgaben zu trennen.
 
-@mermaid
+```mermaid @mermaid
 flowchart LR
     S[LiDAR / Kamera] --> L[Embedded Linux\nPerzeption · Lokalisierung · ONNX]
     I[IMU / Inkrementalgeber] --> M[FreeRTOS MCU\nZeitkritische Erfassung]
@@ -108,7 +108,7 @@ flowchart LR
     M --> A[Motor + Servo PWM]
     E[Not-Aus / E-Stop] --> M
     M --> F[Sicherer Halt / Aktuator-Limits]
-@mermaid
+```
 
 ### 4.1 Aufgabenverteilung
 
@@ -198,7 +198,7 @@ flowchart LR
 
 ### 7.2 Betriebsmodi (State Machine)
 
-@mermaid
+```mermaid @mermaid
 stateDiagram-v2
     [*] --> Boot
     Boot --> SelfTest: Initialisierung OK
@@ -209,7 +209,7 @@ stateDiagram-v2
     Driving --> SafeStop: Kritischer Fehler / E-Stop
     Degraded --> SafeStop: Fehler eskaliert
     SafeStop --> Standby: Reset & Fehlerbehebung
-@mermaid
+```
 
 - **Boot:** Systemstart, Speicherprüfungen und Hardware-Initialisierung.
 - **Self-Test & Calibration:** Überprüfung der Sensorik/Aktuierung und Nullpunkt-Kalibrierung.
