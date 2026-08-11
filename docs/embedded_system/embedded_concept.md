@@ -134,10 +134,10 @@ flowchart LR
 [ Board Support Package (BSP) & Treiber ]  ──> (GPIO, Timer, ADC, CAN, PWM)
 ```
 
-### 4.3 Echtzeit-Primitiven
-- **ISR & DMA:** Schnelle Datenerfassung ohne CPU-Overhead
-- **Queues:** Entkoppelte Variablenübergabe zwischen Tasks
-- **Mutex & PIP:** Schutz gemeinsamer Ressourcen ohne Prioritätsinversion
+RTOS-Mechanismen
+- **ISR & DMA** (hardwarenah, latenzarm)
+- **Queues/Semaphores** (entkoppeln Producer/Consumer)
+- **Mutex & PIP** (Ressourcenschutz ohne Prioritätsinversion)
 
 -----
 
@@ -151,14 +151,14 @@ $$\text{PyTorch (PC)} \xrightarrow{\text{Export}} \text{ONNX (Float32)} \xrighta
 | **Int8 (Quantisiert)** | $\approx 19\,\text{KiB}$ | CMSIS-NN (MCU) |
 
 ### 5.1 Safety Cage um die Policy
-- RL-Policy liefert **nur Wunsch-Sollwerte**
-- **Sicherheitsfilter:**
-  - Lenkwinkel- & Lenkraten-Begrenzung
-  - Geschwindigkeits- & Beschleunigungs-Limits
-  - Plausibilitäts-Check ($NaN$- & Ausreißer-Rejektion)
-  - Freshness
-  - Timeout: Not-Aus bei Kommunikationsabriss
-  - Emergency Stop: Sofortige Abschaltung im Fehlerfall
+RL-Policy liefert **nur Wunsch-Sollwerte**
+**Sicherheitsfilter:**
+- Lenkwinkel- & Lenkraten-Begrenzung
+- Geschwindigkeits- & Beschleunigungs-Limits
+- Plausibilitäts-Check ($NaN$- & Ausreißer-Rejektion)
+- Freshness
+- Timeout: Not-Aus bei Kommunikationsabriss
+- Emergency Stop: Sofortige Abschaltung im Fehlerfall
 
 -----
 
@@ -190,31 +190,22 @@ stateDiagram-v2
 
 ## 7. Verifikation & Test-Pyramide (am Projekt)
 
-```mermaid @mermaid
-flowchart TD
-    subgraph Pyramid [Test-Pyramide]
-        HIL_Node["HIL (Spitze)\nganzes System, simulierte Umwelt\nreal und teuer, wenige Tests"]
-        Target_Node["On-Target (Mitte)\nechter µC, echte Register\nlangsamer, braucht Hardware"]
-        Host_Node["Host-Tests (Basis)\nnativ auf dem PC\nblitzschnell, tausende in CI"]
-    end
-    HIL_Node --> Target_Node
-    Target_Node --> Host_Node
-```
-
 | Stufe | Projektbeispiel | Was wird getestet? |
 | --- | --- | --- |
-| **Host-Tests (Basis)** | Ackermann-Kinematik, Koordinatentransformationen, $15$D-Normalisierung, Clipping-Logik, ONNX-Referenzausgaben | Reine Mathematik & Logik, kein µC nötig, tausende Tests in CI |
+| **Host-Tests** | Ackermann-Kinematik, Koordinatentransformationen, $15$D-Normalisierung, Clipping-Logik, ONNX-Referenzausgaben | Reine Mathematik & Logik, kein µC nötig, tausende Tests in CI |
 | **On-Target** | Safety-Filter-Grenzwerte auf STM32, PWM-Timing, ADC-Abtastung, Watchdog-Auslösung, CAN-Frame-Integrität | Echter µC, echte Register via JTAG/SWD, verifiziert Firmware-Verhalten |
-| **HIL (Spitze)** | Aufgebocktes Fahrzeug $\rightarrow$ Langsame Geradeausfahrt $\rightarrow$ Kurven $\rightarrow$ Hindernisse $\rightarrow$ Fehlerinjektion auf Teststrecke | Gesamtsystem mit Leistungsrechner + MCU + Sensorik, findet Integrationsfehler |
+| **HIL** | Aufgebocktes Fahrzeug $\rightarrow$ Langsame Geradeausfahrt $\rightarrow$ Kurven $\rightarrow$ Hindernisse $\rightarrow$ Fehlerinjektion auf Teststrecke | Gesamtsystem mit Leistungsrechner + MCU + Sensorik, findet Integrationsfehler |
 
 -----
 
-## 8. Dependability & Fehlertoleranz (am Projekt)
+## 8. Dependability & Fehlertoleranz
 
-### 8.1 Fehler-Kaskade (Beispiel: IMU-Ausfall)
+Fehler-Kaskade (Beispiel: IMU-Ausfall)
+
 $$\underbrace{\text{IMU-Kabelbruch}}_{\text{Fault}} \longrightarrow \underbrace{\text{Fusionsfilter divergiert}}_{\text{Error}} \longrightarrow \underbrace{\text{Fahrzeug verlässt Strecke}}_{\text{Failure}}$$
 
-### 8.2 Konkrete Schutzmaßnahmen im Projekt
+
+Konkrete Schutzmaßnahmen
 
 | Maßnahme | Mechanismus im Projekt | Schutzziel |
 | --- | --- | --- |
