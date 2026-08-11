@@ -31,7 +31,6 @@ import:   https://raw.githubusercontent.com/LiaTemplates/mermaid_template/0.1.4/
 
 ![ICP-Lokalisierung & Pfadvisualisierung](../media/Loc_Model_5.gif)
 
-### Kernfakten
 - **Ziel:** Autonomes WRO Future Engineers Rennfahrzeug
 - **Methode:** Deep Reinforcement Learning (PPO) in Webots-Simulation
 - **Pipeline:** Sequenzielle 4-Stufen-Architektur (`Perception` $\rightarrow$ `Estimation` $\rightarrow$ `Planning` $\rightarrow$ `Control`)
