@@ -2,7 +2,7 @@
 
 author:   WRO FE SIM Team
 email:    fabian.zeiler@tu-freiberg.de
-version:  1.0.0
+version:  1.2.0
 language: de
 narrator: Deutsch Female
 comment:  Embedded Concept & Architektur-Spezifikation für die Sim-to-Real-Übertragung eines autonomen Rennroboters (PPO-Policy, FreeRTOS, Embedded Linux, Safety Filter).
@@ -16,239 +16,206 @@ import:   https://raw.githubusercontent.com/LiaTemplates/mermaid_template/0.1.4/
 
 # Embedded Concept -- Sim-to-Real Autonomous Racing Robot
 
-| Parameter                | Kurs- / Projektinformationen                                                                                                                                                                                                   |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Projekt:**             | `Sim-to-Real Autonomous Racing Robot`                                                                                                                                                                                          |
-| **Veranstaltung / Modul:**| `Softwareentwicklung für Eingebettete Systeme / RL Simulation`                                                                                                                                                                 |
-| **Hochschule:**          | `Technische Universität Bergakademie Freiberg`                                                                                                                                                                                 |
-| **Inhalte:**             | `Embedded System Architecture, Timing-Budgets, Edge-AI Deployment, Safety Supervision & Dependability`                                                                                                                         |
-| **Link auf GitHub:**     | [embedded_concept.md](https://github.com/Bigfire3/wro-fe-rl-simulation/blob/main/docs/embedded_system/embedded_concept.md)                                                                                                    |
-| **Autoren:**             | WRO FE SIM Team                                                                                                                                                                                                                |
-
-Dieses Dokument beschreibt das eingebettete Systemkonzept für den Transfer einer im Simulator (Webots) trainierten PPO-Policy auf eine reale, zeitkritische und sicherheitsüberwachte Hardware-Plattform.
-
-> **Zentrale Zielvorgaben:**
-> - **Regelfrequenz:** $10\,\text{Hz}$ (Kontrollzyklus: $100\,\text{ms}$)
-> - **End-to-End Deadline:** $\le 100\,\text{ms}$ (Sensordatenerfassung bis Stellbefehlsgabe)
-> - **Architektur:** Hybrid-Ansatz aus Embedded Linux (Autonomie/Inferenz) und FreeRTOS-MCU (Sicherheit/Aktuatorik)
+| Parameter | Kurs- / Projektinformationen |
+| --- | --- |
+| **Projekt:** | `WRO Future Engineers -- Sim-to-Real Autonomous Racing Robot` |
+| **Modul:** | `Softwareentwicklung für Eingebettete Systeme / RL Simulation` |
+| **Hochschule:** | `Technische Universität Bergakademie Freiberg` |
+| **Inhalte:** | `Embedded Architecture, Timing-Budgets, Edge-AI Deployment, Safety Supervision & Dependability` |
+| **GitHub:** | [Bigfire3/wro-fe-rl-simulation](https://github.com/Bigfire3/wro-fe-rl-simulation/blob/main/docs/embedded_system/embedded_concept.md) |
+| **Autoren:** | Fabian Zänker |
 
 -----
 
-## 1. Zielstellung (Goal)
+## 1. Projekt-Übersicht & Simulations-Baseline
 
-Das Hauptziel besteht in der zuverlässigen Übertragung (Sim-to-Real) einer mittels Reinforcement Learning (PPO) trainierten Fahrstrategie auf ein physisches Rennfahrzeug.
+![Webots 3D Rennsimulation](../media/Track_Model_5.gif)
 
-- **Zuverlässiger Realwelt-Einsatz:** Die trainierte PPO-Policy steuert das Fahrzeug autonom auf der Rennstrecke.
-- **Einbettung in Gesamtarchitektur:** Die RL-Policy agiert als Subsystem innerhalb eines eingebetteten, zeitkritischen und sicherheitsüberwachten Regelungssystems.
-- **Ziel-Regelfrequenz:** $10\,\text{Hz}$ ($100\,\text{ms}$ Zykluszeit).
-- **Harte Deadline:** Die End-to-End-Latenz zwischen der Erfassung der Sensordaten und dem Anlegen der PWM-Signale an den Motoren darf $100\,\text{ms}$ nicht überschreiten.
+![ICP-Lokalisierung & Pfadvisualisierung](../media/Loc_Model_5.gif)
 
------
-
-## 2. Simulations-Baseline (Simulation Baseline)
-
-Die Referenzimplementierung basiert auf einer Webots-Simulationsumgebung im Software-in-the-Loop-Verfahren (SiL).
-
-### 2.1 Verarbeitungs-Pipeline
-
-```
-[ Perception ]  --->  [ Estimation ]  --->  [ Planning ]  --->  [ Control ]
-LiDAR / Kamera         Lokalisierung /      PPO-Policy          Ackermann-Lenkung /
-IMU                    ICP / Map            (RL Agent)          Motor & Servo PWM
-```
-
-1. **Perzeption:** LiDAR, IMU, Farbkamera.
-2. **Zustandsschätzung:** Lokalisierung, ICP (Iterative Closest Point), Hinderniskartierung.
-3. **Pfadplanung / Agent:** PPO-Policy (Neuronales Netz).
-4. **Regelung:** Ackermann-Kinematik, Ansteuerung von Antriebsmotor und Lenkservo.
-
-### 2.2 Modell-Spezifikation
-
-- **Beobachtungsraum:** Normalisierter 15-dimensionaler Vektor ($\vec{o} \in [-1.0, 1.0]^{15}$), der Eigenbewegung, Fahrbahnränder und Hindernispositionen repräsentiert.
-- **Aktionsraum:** Zwei kontinuierliche Stellgrößen:
-  - Lenkwinkeländerung ($\Delta \delta$)
-  - Geschwindigkeitsänderung ($\Delta v$)
-- **Modell-Format:** PyTorch-Training mit anschließendem Export als ONNX-Akteur-Netzwerk.
-- **Modell-Footprint:** 18.818 Parameter (entspricht ca. $74\,\text{KiB}$ Float32-Gewichten).
+### 1.1 Kernfakten
+- **Ziel:** Autonomes WRO Future Engineers Rennfahrzeug
+- **Methode:** Deep Reinforcement Learning (PPO) in Webots-Simulation
+- **Pipeline:** Sequenzielle 4-Stufen-Architektur (`Perception` $\rightarrow$ `Estimation` $\rightarrow$ `Planning` $\rightarrow$ `Control`)
+- **Beobachtung ($\vec{o}$):** $15$-dimensionaler normalisierter Vektor ($\vec{o} \in [-1.0, 1.0]^{15}$)
+- **Aktion ($\vec{a}$):** Continuous Steering & Speed Adjustments ($\Delta \delta$, $\Delta v$)
+- **Modell-Export:** PyTorch $\rightarrow$ ONNX Actor Model ($18.818$ Parameter, $\approx 74\,\text{KiB}$ Float32 Gewichte)
 
 -----
 
-## 3. Sim-to-Real Herausforderungen (Sim-to-Real Challenges)
+## 2. Sim-to-Real-Lücke (Simulation vs. Realität)
 
-Der Transfer aus der Simulation auf die physische Hardware bringt verschiedene Realwelt-Effekte mit sich, die adressiert werden müssen.
+| System-Aspekt | Webots Simulation (SiL) | Reales Embedded System |
+| --- | --- | --- |
+| **Geschwindigkeit** | Direkt aus Physik-Engine / Supervisor | Schätzung via Encodern + IMU (ADC, Interrupts, Fusionsfilter) |
+| **Sensorik** | Rauschfrei, exakt, synchrone Zeitstempel | Rauschen, Bias, Latenzen, Dropouts, asynchrone Zeitstempel |
+| **Aktuatorik** | Ideale Lenkwinkel- & Drehmoment-Umsetzung | Totzonen, Sättigung, Spiel (Backlash), Reifenschlupf, PWM-Treiber |
+| **Ressourcen** | Unbegrenzter PC (Python, NumPy, PyTorch) | Begrenzter Flash, SRAM, Rechenleistung, Energie- & Thermobudget |
+| **Hauptengpass** | Keine zeitlichen Restriktionen | Perzeption & ICP-Lokalisierung (nicht die Policy selbst!) |
 
-### 3.1 Physikalische & Technische Effekte
-
-- **Geschwindigkeitsschätzung:** Ermittlung der realen Ist-Geschwindigkeit aus Rad-Inkrementalgebern, IMU-Fusion und Zustandsschätzung.
-- **Störungen der Sensorik:** Rauschen, Drift/Bias, Quantisierungsfehler, Latenzen, Paketverluste und unvollständige Zeitstempel-Synchronisation.
-- **Aktuatorik-Dynamik:** Totzonen, Stellgrößensättigung, mechanisches Spiel (Backlash), Reifenschlupf und Stellverzögerungen.
-- **Ressourcenbeschränkungen:** Limitierter Flash- und SRAM-Speicher, begrenzte Rechenleistung, Energie- und Thermobudget auf der Zielhardware.
-- **Flaschenhälse:** Bildverarbeitung und Lokalisierung stellen die primären Ressourcen-Engpässe dar.
-
-### 3.2 Maßnahmen im RL-Training (Training-Side Mitigation)
-
-> Um die Robustheit gegenüber Modellabweichungen zu erhöhen, werden während des Trainings folgende Techniken eingesetzt:
-
-- **Domain Randomization:** Variation von Reibwerten, Massen, Trägheitsmomenten und Fahrbahngeometrien.
-- **Stör- & Verzögerungsmodelle:** Injektion von künstlichem Sensorrauschen und Kommunikations-Latenzen.
-- **Sensorausfall-Szenarien:** Simulation temporärer Sensor-Dropouts.
-- **Aktuator-Variabilität:** Schwankende Ansprechzeiten und Parameterschwankungen der Motoren/Servos.
+### 2.1 Training-Side Mitigation (Robustheitsmaßnahmen)
+- **Domain Randomization:** Variation von Reibwerten, Massen, Trägheitsmomenten
+- **Stör- & Verzögerungsmodelle:** Künstliches Sensorrauschen & Kommunikations-Latenzen
+- **Sensorausfall-Szenarien:** Simulation von Sensor-Dropouts
+- **Aktuator-Variabilität:** Parameterstreuung bei Motoren & Servos
 
 -----
 
-## 4. Zielarchitektur (Target Architecture)
+## 3. Echtzeit-Anforderungen & Timing-Budgets
 
-Die Systemarchitektur verteilt die Aufgaben auf zwei dedizierte Recheneinheiten, um rechenintensive KI-Aufgaben von deterministischen Sicherheits- und Steuerungsaufgaben zu trennen.
+- **Regelfrequenz:** $10\,\text{Hz}$ ($100\,\text{ms}$ Kontrollzyklus)
+- **Ende-zu-Ende Deadline:** $\le 100\,\text{ms}$ (Sensorabtastung $\rightarrow$ PWM-Ausgabe)
+
+### 3.1 Timing-Budget Zerlegung ($100\,\text{ms}$ Gesamtbudget)
+
+| Phase | Zeitbudget | Hauptaufgabe |
+| --- | ---: | --- |
+| **1. Sensor-Sync** | $15\,\text{ms}$ | Zeitstempel-Zuordnung & Gültigkeits-Check (DMA/ISR) |
+| **2. Lokalisierung (ICP)** | $40\,\text{ms}$ | Bounded Processing Time & Kartenabgleich |
+| **3. Inferenz (ONNX)** | $15\,\text{ms}$ | Deterministische PPO-Policy Inferenz |
+| **4. Aktuierung & Comm** | $10\,\text{ms}$ | PWM-Erzeugung & CAN/UART-Übertragung |
+| **5. Jitter-Reserve** | $20\,\text{ms}$ | Puffer für Interrupts, Kontextwechsel & Varianz |
+
+### 3.2 Echtzeit-Klassifikation
+- **RL-Policy (Pfadplanung):** Weiche / Feste Echtzeit (Latenz verschlechtert Fahrqualität, verursacht nicht direkt Crash)
+- **Sicherheitsfilter / Not-Stopp:** Harte Echtzeit (Deterministische Einhaltung von Fahrzeug- & Kollisionsgrenzen)
+
+-----
+
+## 4. Zielarchitektur (Heterogener AMP-Ansatz)
 
 ```mermaid @mermaid
 flowchart LR
-    S[LiDAR / Kamera] --> L[Embedded Linux\nPerzeption · Lokalisierung · ONNX]
-    I[IMU / Inkrementalgeber] --> M[FreeRTOS MCU\nZeitkritische Erfassung]
-    L <-->|CAN / UART\nZeitstempel · Sequenz · CRC| M
-    M --> A[Motor + Servo PWM]
-    E[Not-Aus / E-Stop] --> M
-    M --> F[Sicherer Halt / Aktuator-Limits]
+    subgraph Linux [Embedded Linux - Jetson / Raspberry Pi]
+        S[LiDAR / Kamera] --> P[Perzeption & ICP-Lokalisierung]
+        P --> O[15D Vector & ONNX Inference]
+    end
+
+    subgraph MCU [FreeRTOS MCU - STM32 / Cortex-M]
+        I[IMU / Encoder] --> M[Sensorerfassung & Fusionsfilter]
+        M --> SF[Deterministischer Safety Filter]
+        O <-->|CAN / UART\nCRC · Timeouts| SF
+        SF --> A[Motor & Servo PWM]
+        E[E-Stop Button] --> SF
+        SF --> Dis[Physical Actuator Disable]
+    end
 ```
 
-### 4.1 Aufgabenverteilung
+### 4.1 Aufgaben- & Hardwareverteilung
 
-#### Embedded Linux (z. B. Jetson Orin / Raspberry Pi)
-- Verarbeitung von Kamera- und LiDAR-Daten.
-- Ausführung von Lokalisierung, Kartierung und Extraktion des 15D-Beobachtungsvektors.
-- ONNX-Runtime-Inferenz des PPO-Netzwerks.
-- System-Logging, Telemetrie und Diagnose-Schnittstellen.
-
-#### FreeRTOS Mikrocontroller (z. B. STM32 / Cortex-M4)
-- High-Speed Datenerfassung von Inkrementalgebern und IMU.
-- Erzeugung der PWM-Signale für Fahrantrieb und Lenkservo.
-- Überwachung von Betriebsspannung und Systemströmen.
-- Ausführung des Hardware-Watchdogs, der Not-Aus-Logik und des Sicherheitsfilters.
+| Komponente | Plattform | Hauptaufgaben | Hardware-Features |
+| --- | --- | --- | --- |
+| **Autonomie-Rechner** | Embedded Linux | Kamera/LiDAR, ICP, ONNX-Runtime, Logging | Multicore, FPU, High SRAM/Flash |
+| **Safety Controller** | FreeRTOS MCU | Encoderauswertung, Servo/Motor-PWM, Safety Filter, Watchdog | DMA, Timers, ADC, GPIO, NVIC |
+| **Bus-Kopplung** | CAN / UART | Sichere Protokollübertragung mit CRC, Sequence-ID & Timeouts | Hardware-CRC, Transceiver |
 
 -----
 
-## 5. Timing & Software-Design
+## 5. RTOS Task-Struktur & Hardware-Abstraktion
 
-### 5.1 Zeitbudget des 10 Hz Regelkreises ($100\,\text{ms}$)
+### 5.1 FreeRTOS Task-Zerlegung
 
-| Aktivität im Regelkreis | Budget | Design-Fokus |
+| Task | Periode / Auslösung | Priorität | Kommunikation / Sync |
+| --- | --- | --- | --- |
+| `Safety_Task` | Event / $1\text{--}5\,\text{ms}$ | `Highest` | Direct Interrupt / Semaphore |
+| `Actuator_Task` | $5\text{--}10\,\text{ms}$ | `High` | Queue (Letzter gültiger Sollwert) |
+| `Sensor_Task` | $5\text{--}10\,\text{ms}$ | `High` | DMA / Ringpuffer |
+| `Autonomie_Comm_Task` | $100\,\text{ms}$ | `Medium` | Queue / Mailbox |
+| `Telemetry_Task` | $500\text{--}1000\,\text{ms}$ | `Low` | Stream Buffer / UART |
+
+### 5.2 Software-Schichtenarchitektur
+
+```
+[ Autonomie- & RL-Anwendung ]
+          │
+[ Plattformunabhängiges Sensor-/Aktuator-Interface ]
+          │
+[ Hardware Abstraction Layer (HAL) ]
+          │
+[ Board Support Package (BSP) & Treiber ]  ──> (GPIO, Timer, ADC, CAN, PWM)
+```
+
+### 5.3 Echtzeit-Primitiven
+- **ISR & DMA:** Schnelle Datenerfassung ohne CPU-Overhead
+- **Queues:** Entkoppelte Variablenübergabe zwischen Tasks
+- **Mutex & PIP:** Schutz gemeinsamer Ressourcen ohne Prioritätsinversion
+
+-----
+
+## 6. Edge-AI Deployment & Safety Cage
+
+### 6.1 Deployment-Pipeline
+$$\text{PyTorch (PC)} \xrightarrow{\text{Export}} \text{ONNX (Float32)} \xrightarrow{\text{Quantisierung}} \text{Int8 C-Code / TFLite Micro}$$
+
+### 6.2 Ressourcenvergleich (Modellgewichte)
+
+| Format | Speicherbedarf Gewichte | Ziel-Laufzeitumgebung |
 | --- | ---: | --- |
-| **Sensor-Synchronisation** | $15\,\text{ms}$ | Zeitstempel-Zuordnung & Gültigkeitsprüfung |
-| **Lokalisierung & Kartierung** | $40\,\text{ms}$ | Deterministisch begrenzte Ausführungszeit |
-| **Beobachtung & RL-Inferenz** | $15\,\text{ms}$ | Ausführung der ONNX-Inferenz innerhalb der Deadline |
-| **Aktuierung & Kommunikation** | $10\,\text{ms}$ | Sichere Befehlsübermittlung (CAN / UART) |
-| **Jitter-Reserve** | $20\,\text{ms}$ | Puffer für Interrupts & Timing-Schwankungen |
+| **Float32 (Baseline)** | $\approx 74\,\text{KiB}$ | ONNX Runtime (Embedded Linux) |
+| **Int8 (Quantisiert)** | $\approx 18\text{--}19\,\text{KiB}$ | CMSIS-NN / TFLite Micro (MCU) |
 
-### 5.2 RTOS Task-Priorisierung (FreeRTOS)
-
-| RTOS Task-Gruppe | Priorität | Timing-Rolle / Funktion |
-| --- | --- | --- |
-| **Emergency Stop & Safety** | Höchste (`Highest`) | Unmittelbare Überführung in den sicheren Zustand bei Fehlern |
-| **Motor, Servo, IMU, Encoder** | Hoch (`High`) | Deterministische Sensorabtastung und PWM-Aktuierung |
-| **Perzeption, Lokalisierung, RL** | Mittel (`Medium`) | Ausführung des autonomen Regelkreises und Modell-Inferenz |
-| **Logging & Telemetrie** | Niedrig (`Low`) | Nicht-kritische Datenaufzeichnung und Diagnose-Schnittstelle |
-
-### 5.3 Software-Architektur & Profiling
-
-- **Erforderliche Profiling-Metriken:**
-  - Worst-Case Execution Time (WCET) & durchschnittliche Ausführungszeit.
-  - Jitter-Messung, Kommunikations-Latenzen und Überwachung von Deadline-Verletzungen.
-- **Schichtenarchitektur (Abstraktion):**
-  1. Autonomie-Anwendung (PPO Policy / Perzeption)
-  2. Hardwareunabhängige Sensor- & Aktuatorschnittstellen
-  3. Hardware Abstraction Layer (HAL)
-  4. Board Support Package (BSP) & Treiber
-- **Echtzeit-Primitiven:** Nutzung von DMA (Direct Memory Access), kurzen ISRs (Interrupt Service Routines), Message Queues, Ringpuffern und Semaphoren.
-- **Super-Loop Policy:** Ein vereinfachter Super-Loop wird erst nach messtechnisch nachgewiesener Einhaltung aller Deadlines als Alternative in Betracht gezogen.
+### 6.3 Safety Cage um die Policy
+- RL-Policy liefert **nur Wunsch-Sollwerte** (*Requested Setpoints*)
+- **Prüfkriterien des Sicherheitsfilters:**
+  - Lenkwinkel- & Lenkraten-Begrenzung
+  - Geschwindigkeits- & Beschleunigungs-Limits
+  - Plausibilitäts-Check ($NaN$- & Ausreißer-Rejektion)
+  - Sensor-Freshness & Timeout-Monitoring
 
 -----
 
-## 6. Edge-AI Deployment
-
-### 6.1 Modell-Konvertierung & Optimierung
-
-- **Normalisierung:** Fest eingefrorener Eingangsnormalisierungsvektor und Referenz-Transformationen.
-- **Validierung:** Abgleich der Ausgangsvektoren zwischen PyTorch-Referenz und ONNX-Modell.
-- **Embedded Linux Baseline:** Ausführung im Float32-Präzisionsmodus mittels ONNX Runtime.
-- **MCU Feasibility Path (Mikrocontroller-Option):**
-  - C/C++ Inferenz-Engine (z.B. TFLite Micro / CMSIS-NN / microTVM).
-  - Post-Training-Quantisierung auf **Int8**.
-  - Speicherbedarf sinkt auf ca. $18\text{--}19\,\text{KiB}$ Int8-Gewichte (exklusive Runtime- & Puffer-Overhead).
-
-### 6.2 Evaluierungsmetriken für Deployment
-
-- Flash- und SRAM-Speicherbedarf.
-- Inferenz-Latenz und Ausführungs-Jitter.
-- Numerische Abweichungen gegenüber der PyTorch-Referenz sowie Auswirkung auf das Fahrverhalten.
-
------
-
-## 7. Sicherheit & Betriebsmodi (Safety and Operation)
-
-### 7.1 Deterministischer Sicherheitsfilter (Safety Filter)
-
-> **Grundprinzip:** Die Befehle der RL-Policy werden vom System niemals direkt an die Aktuatoren durchgereicht, sondern dienen ausschließlich als **Wunsch-Sollwerte** (Requested Setpoints).
-
- Der nachgelagerte Sicherheitsfilter prüft und beschränkt die Signale deterministisch:
-
-1. **Grenzwertüberwachung:** Beschränkung von Lenkwinkel, Lenkwinkelgeschwindigkeit, Fahrgeschwindigkeit und Beschleunigung.
-2. **Datenfrische:** Überprüfung der Aktualität (Freshness) und Validität aller eingehenden Sensordaten.
-3. **Timeout-Überwachung:** Automatische Abschaltung bei Ausbleiben von Steuerbefehlen oder Kommunikationsababriss.
-4. **Plausibilitätsprüfung:** Rejektion von ungültigen Werten (z. B. `NaN` oder Ausreißer außerhalb des Definitionsbereichs).
-5. **E-Stop & Safe Stop:** Erzwungene Überführung in den sicheren Halt bei Verletzung der Sicherheitsgrenzen.
-
-### 7.2 Betriebsmodi (State Machine)
+## 7. Zustandsautomat für den realen Betrieb (State Machine)
 
 ```mermaid @mermaid
 stateDiagram-v2
-    [*] --> Boot
-    Boot --> SelfTest: Initialisierung OK
-    SelfTest --> Standby: Test & Kalibrierung OK
-    Standby --> Driving: Scharfschaltung (Armed)
-    Driving --> Standby: Deaktivierung
-    Driving --> Degraded: Teilausfall Sensorik
-    Driving --> SafeStop: Kritischer Fehler / E-Stop
-    Degraded --> SafeStop: Fehler eskaliert
-    SafeStop --> Standby: Reset & Fehlerbehebung
+    [*] --> Boot: Systemstart
+    Boot --> SelfTest: Hardware Init OK
+    SelfTest --> Calibration: Sensoren & Aktuatoren OK
+    Calibration --> Ready: Zero-Pos & Pose gültig
+    Ready --> Driving: Startfreigabe / Armed
+    Driving --> Ready: Deaktivierung
+    Driving --> Degraded: Teilweiser Sensorausfall
+    Driving --> SafeStop: E-Stop / Deadline Miss / Timeout
+    Degraded --> SafeStop: Fehler-Eskalation
+    SafeStop --> Ready: Quittierung & Reset
 ```
 
-- **Boot:** Systemstart, Speicherprüfungen und Hardware-Initialisierung.
-- **Self-Test & Calibration:** Überprüfung der Sensorik/Aktuierung und Nullpunkt-Kalibrierung.
-- **Standby & Armed:** Betriebsbereitschaft und Scharfschaltung des Fahrzeugs.
-- **Driving:** Autonomer Fahrbetrieb (**RL-Inferenz ist nur in diesem Zustand aktiv**).
-- **Degraded Mode:** Notbetrieb mit reduzierter Geschwindigkeit bei Teilfehlern.
-- **Safe Stop & Fault:** Sicheres Anhalten des Fahrzeugs bei kritischen Systemfehlern.
+### 7.1 Betriebsmodi & Rollen
+- **Boot:** Speicher- & Treiberinitialisierung
+- **SelfTest:** Hardware-, Sensor- & Spannungstests
+- **Calibration:** Nullpunktabgleich für Lenksystem & IMU
+- **Ready:** System betriebsbereit & scharfgeschaltet
+- **Driving:** Autonomer Fahrbetrieb (**RL-Inferenz NUR hier aktiv!**)
+- **Degraded:** Notbetrieb mit reduzierter Geschwindigkeit
+- **SafeStop:** Sicherer Anhalteweg & Aktuator-Abschaltung
 
 -----
 
-## 8. Verifikation & Zuverlässigkeit (Verification and Dependability)
+## 8. Verifikation & Testleiter (V-Modell)
 
-### 8.1 Teststufen
+```mermaid @mermaid
+flowchart LR
+    UT[1. Unit Tests\nMathe & Kinematik] --> MIL[2. MiL / SiL\nSimulation & Fault Injection]
+    MIL --> HIL[3. HiL Teststand\nFirmware & Watchdog Timing]
+    HIL --> VEH[4. Fahrzeugtests\nAufgebockt ➔ Langsam ➔ Vollgas]
+```
 
-1. **Unit Tests:** Überprüfung von Koordinatentransformationen, Ackermann-Kinematik, Normalisierungsfunktionen, Clipping und Inferenz-Referenzen.
-2. **MiL / SiL (Model- / Software-in-the-Loop):** Simulation unter Einfluss von Sensorrauschen, Totzeiten, Parametervariations-Tests und gezielter Fehlerinjektion (Fault Injection).
-3. **HiL (Hardware-in-the-Loop):** Verifikation des Firmware-Timings, Jitter, Speicherverbrauchs, Kommunikationsprotokolls und Watchdog-Verhaltens am Prüfstand.
-4. **Inkrementelle Fahrzeugtests:**
-   - Aufgebocktes Fahrzeug (Raised Wheels Test)
-   - Langsame Geradeausfahrt
-   - Kurvenfahrt & Hindernisumfahrung
-   - Fehlerinjektion auf der Teststrecke
-
-### 8.2 Zuverlässigkeitsmechanismen (Dependability)
-
-- **Hardware-Watchdog:** Automatischer Controller-Reset bei Software-Hängern.
-- **Linux-MCU Heartbeat:** Gegenseitige Überwachung der Kommunikationsverbindung.
-- **Redundanz:** Abgleich zwischen Inkrementalgebern und IMU-Daten zur Plausibilisierung.
-- **Datenintegrität:** CRC-Prüfsummen für alle Nachrichten, Modell-Hashes und Konfigurations-Checklisten.
-- **Abschaltpfad:** Unabhängiger, von der MCU kontrollierter physischer Abschaltpfad für die Aktuatoren.
+### 8.1 Teststufen im Überblick
+- **Unit Tests:** Transformationen, Ackermann-Kinematik, Normalisierung, Clipping
+- **MiL / SiL:** Stochastische Hindernisse, Reibwertvariationen, Sensor-Dropouts
+- **HiL (Hardware-in-the-Loop):** Messung von WCET, Jitter, SRAM-Bedarf & CAN-Latenzen
+- **Fahrzeugtests:** Aufgebockte Räder $\rightarrow$ Langsame Fahrt $\rightarrow$ Hindernisse $\rightarrow$ Fehlerinjektion auf Teststrecke
 
 -----
 
-## 9. Meilensteine & Delivery (Delivery Milestones)
+## 9. Dependability & Fehlertoleranz
 
-- [x] **M1:** Hardwareunabhängige Schnittstellenspezifikation.
-- [ ] **M2:** Prototyp der Linux-Autonomieanwendung und MCU-Sicherheitssteuerung.
-- [ ] **M3:** Deterministisches Kommunikationsprotokoll (CAN / UART).
-- [ ] **M4:** Timing-, Speicher- und Safety-Filter-Validierung.
-- [ ] **M5:** ONNX-Referenz-Testsuite und Quantisierungs-Assessment.
-- [ ] **M6:** HiL-Prüfstandsaufbau und inkrementelle Teststrecken-Validierung.
-- [ ] **M7:** CI-Pipeline für automatische Tests, statische Code-Analyse, Builds, Modell-Kompatibilität und Regressionsszenarien.
+### 9.1 Fehler-Kaskade
+$$\text{Fehlerursache (Fault)} \longrightarrow \text{Systemstörung (Error)} \longrightarrow \text{Dienstausfall (Failure)}$$
+
+### 9.2 Schutzmaßnahmen
+- **Hardware-Watchdog:** Automatischer Reset bei Software-Hängern
+- **Heartbeat:** Linux-MCU Kontrollsignal-Überwachung
+- **Informationelle Redundancy:** CRC32, Sequenznummern, Modell-Hashes
+- **Funktionale Redundanz:** Rad-Encoder + IMU Fusionsfilter
+- **Fail-Safe:** Hardwareseitiger Abschaltpfad zur Deaktivierung der Motorbrücke
