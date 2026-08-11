@@ -8,6 +8,8 @@ narrator: Deutsch Female
 comment:  Embedded Concept & Architektur-Spezifikation für die Sim-to-Real-Übertragung eines autonomen Rennroboters (PPO-Policy, FreeRTOS, Embedded Linux, Safety Filter).
 icon:     https://upload.wikimedia.org/wikipedia/commons/d/de/Logo_TU_Bergakademie_Freiberg.svg
 
+import:   https://raw.githubusercontent.com/LiaTemplates/mermaid_template/0.1.4/README.md
+
 -->
 
 [![LiaScript](https://raw.githubusercontent.com/LiaScript/LiaScript/master/badges/course.svg)](https://liascript.github.io/course/?https://raw.githubusercontent.com/Bigfire3/wro-fe-rl-simulation/main/docs/embedded_system/embedded_concept.md#1)
@@ -98,7 +100,7 @@ Der Transfer aus der Simulation auf die physische Hardware bringt verschiedene R
 
 Die Systemarchitektur verteilt die Aufgaben auf zwei dedizierte Recheneinheiten, um rechenintensive KI-Aufgaben von deterministischen Sicherheits- und Steuerungsaufgaben zu trennen.
 
-```mermaid
+@mermaid
 flowchart LR
     S[LiDAR / Kamera] --> L[Embedded Linux\nPerzeption · Lokalisierung · ONNX]
     I[IMU / Inkrementalgeber] --> M[FreeRTOS MCU\nZeitkritische Erfassung]
@@ -106,7 +108,7 @@ flowchart LR
     M --> A[Motor + Servo PWM]
     E[Not-Aus / E-Stop] --> M
     M --> F[Sicherer Halt / Aktuator-Limits]
-```
+@end
 
 ### 4.1 Aufgabenverteilung
 
@@ -196,7 +198,7 @@ flowchart LR
 
 ### 7.2 Betriebsmodi (State Machine)
 
-```mermaid
+@mermaid
 stateDiagram-v2
     [*] --> Boot
     Boot --> SelfTest: Initialisierung OK
@@ -207,7 +209,7 @@ stateDiagram-v2
     Driving --> SafeStop: Kritischer Fehler / E-Stop
     Degraded --> SafeStop: Fehler eskaliert
     SafeStop --> Standby: Reset & Fehlerbehebung
-```
+@end
 
 - **Boot:** Systemstart, Speicherprüfungen und Hardware-Initialisierung.
 - **Self-Test & Calibration:** Überprüfung der Sensorik/Aktuierung und Nullpunkt-Kalibrierung.
