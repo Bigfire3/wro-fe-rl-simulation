@@ -152,7 +152,7 @@ SolidBox {
 AckermannVehicle {
   translation -0.221441 -1.01067 0.0300003
   rotation 0 0 1 -5.307179586466759e-06
-  controller "<extern>"
+  controller "wro_driver"
   supervisor TRUE
   trackFront 0.12
   trackRear 0.12
