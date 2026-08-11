@@ -207,10 +207,10 @@ $$\underbrace{\text{IMU-Kabelbruch}}_{\text{Fault}} \longrightarrow \underbrace{
 
 Konkrete Schutzmaßnahmen
 
-| Maßnahme | Mechanismus im Projekt | Schutzziel |
+| Maßnahme | Mechanismus | Schutzziel |
 | --- | --- | --- |
 | **Hardware-Watchdog** | MCU-Watchdog-Timer, Reset bei ausbleibender Bedienung | Software-Hänger $\rightarrow$ automatischer Neustart |
 | **Heartbeat** | Leistungsrechner sendet periodisches Lebenszeichen an MCU | Erkennung eines Linux-Absturzes oder Kommunikationsabrisses |
 | **Informationelle Redundanz** | CRC32 auf allen CAN/UART-Nachrichten, Sequenznummern, ONNX-Modell-Hash bei Boot | Erkennung von Bitfehlern, verlorenen Paketen, falschem Modell |
-| **Funktionale Redundanz** | Rad-Encoder + IMU liefern unabhängig Geschwindigkeit (Aktive Redundanz) | Plausibilisierung & Schlupferkennung |
+| **Funktionale Redundanz** | Rad-Encoder + IMU liefern unabhängig Geschwindigkeit (Aktive Redundanz) | Plausibilisierung |
 | **Hardware-Abschaltpfad** | MCU-kontrollierter MOSFET trennt Motorbrücke physikalisch | Fail-Safe: Aktuatoren stromlos bei kritischem Fehler |
