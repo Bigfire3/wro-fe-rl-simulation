@@ -2,7 +2,7 @@
 
 author:   WRO FE SIM Team
 email:    fabian.zeiler@tu-freiberg.de
-version:  1.2.0
+version:  1.3.0
 language: de
 narrator: Deutsch Female
 comment:  Embedded Concept & Architektur-Spezifikation für die Sim-to-Real-Übertragung eines autonomen Rennroboters (PPO-Policy, FreeRTOS, Embedded Linux, Safety Filter).
@@ -47,11 +47,11 @@ import:   https://raw.githubusercontent.com/LiaTemplates/mermaid_template/0.1.4/
 
 | System-Aspekt | Webots Simulation (SiL) | Reales Embedded System |
 | --- | --- | --- |
-| **Geschwindigkeit** | Direkt aus Physik-Engine / Supervisor | Schätzung via Encodern + IMU (ADC, Interrupts, Fusionsfilter) |
 | **Sensorik** | Rauschfrei, exakt, synchrone Zeitstempel | Rauschen, Bias, Latenzen, Dropouts, asynchrone Zeitstempel |
 | **Aktuatorik** | Ideale Lenkwinkel- & Drehmoment-Umsetzung | Totzonen, Sättigung, Spiel (Backlash), Reifenschlupf, PWM-Treiber |
 | **Ressourcen** | Unbegrenzter PC (Python, NumPy, PyTorch) | Begrenzter Flash, SRAM, Rechenleistung, Energie- & Thermobudget |
 | **Hauptengpass** | Keine zeitlichen Restriktionen | Perzeption & ICP-Lokalisierung (nicht die Policy selbst!) |
+| **Geschwindigkeit!** | Direkt aus Physik-Engine / Supervisor | Schätzung via Encodern + IMU (ADC, Interrupts, Fusionsfilter) |
 
 ### 2.1 Training-Side Mitigation (Robustheitsmaßnahmen)
 - **Domain Randomization:** Variation von Reibwerten, Massen, Trägheitsmomenten
@@ -82,7 +82,28 @@ import:   https://raw.githubusercontent.com/LiaTemplates/mermaid_template/0.1.4/
 
 -----
 
-## 4. Zielarchitektur (Heterogener AMP-Ansatz)
+## 4. Architekturoptionen & Zielarchitektur
+
+### 4.1 Vergleich der 3 Architektur-Varianten
+
+| Variante | Plattform-Idee | Vorteile | Nachteile / Ausschlussgrund |
+| --- | --- | --- | --- |
+| **Variante A: Pure Embedded Linux** | Single-Board Computer (Jetson / RPi) | Python/ONNX direkt nutzbar, viel RAM für LiDAR/ICP | Kein harter Determinismus (ohne PREEMPT_RT), hoher Energiebedarf, lange Bootzeit |
+| **Variante B: Pure MCU (Single Controller)** | Cortex-M / ESP32 / ATmega | Geringer Energiebedarf, kurze Bootzeit, direkte HW-Kontrolle | **ATmega328 (2 KiB SRAM):** Ungeeignet! Policy-Gewichte allein benötigen $\approx 74\,\text{KiB}$!<br>**STM32F401 (96 KiB SRAM):** Int8-Netz ($\approx 19\,\text{KiB}$) passt theoretisch, aber ICP/Kamera sprengen SRAM!<br>**ESP32-S3 (512 KiB SRAM):** Inferenz möglich, aber komplette Pipeline (LiDAR/Pointcloud) überfordert MCU. |
+| **Variante C: Heterogen (Empfehlung)** | Embedded Linux + FreeRTOS MCU | Perfekte Aufgabentrennung (AMP), Autonomie & Sicherheit entkoppelt | Höhere Systemkomplexität & Bus-Kopplung erforderlich |
+
+### 4.2 Detaillierte Ausschlussgründe für Mikrocontroller (MCU-Limits)
+- **ATmega328 (Arduino Uno -- 8-Bit AVR):**
+  - $2\,\text{KiB}$ SRAM, $32\,\text{KiB}$ Flash, $16\,\text{MHz}$
+  - ❌ **Ausschluss:** Reines Float32-Modell ($\approx 74\,\text{KiB}$) übersteigt Flash & SRAM vollständig; keinerlei Kapazität für ONNX-Inferenz, ICP oder Kamera.
+- **STM32F401 (Cortex-M4 -- 32-Bit ARM):**
+  - $96\,\text{KiB}$ SRAM, $512\,\text{KiB}$ Flash, $84\,\text{MHz}$
+  - ⚠️ **Grenzwertig:** Int8-quantisierte Gewichte ($\approx 18\text{--}19\,\text{KiB}$) passen zwar in Flash/SRAM, aber Aktivierungspuffer, Stacks, LiDAR-Daten & ICP-Lokalisierung sprengen $96\,\text{KiB}$ SRAM.
+- **ESP32-S3 (Xtensa Dual-Core 32-Bit):**
+  - $512\,\text{KiB}$ SRAM, $240\,\text{MHz}$, Vektor-Instruktionen (TinyML)
+  - ⚡ **Teilweise geeignet:** Quantisierte Netzinferenz auf MCU machbar, jedoch überfordert die gesamte Wahrnehmungs- & Kartierungspipeline (Pointcloud, ICP, OpenCV) den Speicher & Rechenzeitrahmen.
+
+### 4.3 Zielarchitektur (Heterogener AMP-Ansatz)
 
 ```mermaid @mermaid
 flowchart LR
@@ -101,7 +122,7 @@ flowchart LR
     end
 ```
 
-### 4.1 Aufgaben- & Hardwareverteilung
+### 4.4 Aufgaben- & Hardwareverteilung (AMP)
 
 | Komponente | Plattform | Hauptaufgaben | Hardware-Features |
 | --- | --- | --- | --- |
@@ -216,6 +237,6 @@ $$\text{Fehlerursache (Fault)} \longrightarrow \text{Systemstörung (Error)} \lo
 ### 9.2 Schutzmaßnahmen
 - **Hardware-Watchdog:** Automatischer Reset bei Software-Hängern
 - **Heartbeat:** Linux-MCU Kontrollsignal-Überwachung
-- **Informationelle Redundancy:** CRC32, Sequenznummern, Modell-Hashes
+- **Informationelle Redundanz:** CRC32, Sequenznummern, Modell-Hashes
 - **Funktionale Redundanz:** Rad-Encoder + IMU Fusionsfilter
 - **Fail-Safe:** Hardwareseitiger Abschaltpfad zur Deaktivierung der Motorbrücke
