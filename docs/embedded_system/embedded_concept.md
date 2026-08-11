@@ -30,7 +30,6 @@ import:   https://raw.githubusercontent.com/LiaTemplates/mermaid_template/0.1.4/
 
 ![ICP-Lokalisierung & Pfadvisualisierung](../media/Loc_Model_5.gif)
 
-- **Ziel:** Autonomes WRO Future Engineers Rennfahrzeug
 - **Methode:** Deep Reinforcement Learning (PPO) in Webots-Simulation
 - **Pipeline:** Sequenzielle 4-Stufen-Architektur (`Perception` $\rightarrow$ `Estimation` $\rightarrow$ `Planning` $\rightarrow$ `Control`)
 - **Beobachtung ($\vec{o}$):** $15$-dimensionaler normalisierter Vektor ($\vec{o} \in [-1.0, 1.0]^{15}$)
@@ -46,22 +45,19 @@ import:   https://raw.githubusercontent.com/LiaTemplates/mermaid_template/0.1.4/
 | **Sensorik** | Rauschfrei, exakt, synchrone Zeitstempel | Rauschen, Bias, Latenzen, Dropouts, asynchrone Zeitstempel |
 | **Aktuatorik** | Ideale Lenkwinkel- & Drehmoment-Umsetzung | Totzonen, Spiel (Backlash), Reifenschlupf, PWM-Treiber |
 | **Ressourcen** | Unbegrenzter PC (Python, NumPy, PyTorch) | Begrenzter Flash, SRAM, Rechenleistung, Energieressourcen |
-| **Geschwindigkeit!** | Direkt aus Physik-Engine / Supervisor | Schätzung via Encodern + IMU (Aktive Redundanz, ADC, Interrupts, Fusionsfilter) |
+| **Geschwindigkeit!** | Direkt aus Physik-Engine | Schätzung via Encodern + IMU (Aktive Redundanz) |
 
 Was ich in der Simulation für die Robustheit noch verbessern könnte:
 - **Domain Randomization:** Variation von Reibwerten, Massen, Trägheitsmomenten
 - **Stör- & Verzögerungsmodelle:** Künstliches Sensorrauschen & Kommunikations-Latenzen
 - **Sensorausfall-Szenarien:** Simulation von Sensor-Dropouts
-- **Aktuator-Variabilität:** Parameterstreuung bei Motoren & Servos
 
 -----
 
 ## 2. Echtzeit-Anforderungen & Timing-Budgets
 
-- **Regelfrequenz:** $10\,\text{Hz}$ ($100\,\text{ms}$ Kontrollzyklus)
-- **Ende-zu-Ende-Deadline:** $\le 100\,\text{ms}$ (Sensorabtastung $\rightarrow$ PWM-Ausgabe)
-
-### 2.1 Timing-Budget-Zerlegung ($100\,\text{ms}$ Gesamtbudget)
+- **Regelfrequenz:** $10\,\text{Hz}$
+- **Sensorabtastung $\rightarrow$ PWM-Ausgabe** $\le 100\,\text{ms}$
 
 | Phase | Zeitbudget | Hauptaufgabe |
 | --- | ---: | --- |
@@ -83,9 +79,9 @@ Was ich in der Simulation für die Robustheit noch verbessern könnte:
 
 | Variante | Plattform-Idee | Vorteile | Nachteile / Ausschlussgrund |
 | --- | --- | --- | --- |
-| **Variante A: Embedded Linux** | ARM-basierter Single-Board Computer (Jetson / RPi) | Python/ONNX direkt nutzbar, viel RAM für LiDAR/ICP | Kein harter Determinismus (ohne PREEMPT_RT), hoher Energiebedarf, lange Bootzeit |
-| **Variante B: Mikrocontroller (MCU)** | Umsetzung auf einem Mikrocontroller (STM32 / ESP32 / ATmega) | Geringer Energiebedarf, kurze Bootzeit, direkte Hardware-Kontrolle | **ATmega328 (2 KiB SRAM):** Ungeeignet! Policy-Gewichte ($\approx 74\,\text{KiB}$) sprengen Speicher vollkommen.<br>**STM32F401 (96 KiB SRAM):** Int8-Gewichte ($\approx 19\,\text{KiB}$) passen theoretisch, aber ICP/Kamera sprengen RAM.<br>**ESP32-S3 (512 KiB SRAM):** Inferenz machbar, aber komplette Wahrnehmung (LiDAR/Pointcloud) überfordert MCU. |
-| **Variante C: Heterogene Architektur (Empfehlung)** | Leistungsrechner + FreeRTOS MCU | Perfekte Aufgabentrennung (AMP), Autonomie & Sicherheit entkoppelt | Höhere Systemkomplexität & Bus-Kopplung erforderlich |
+| **Embedded Linux** | ARM-basierter Single-Board Computer (Jetson / RPi) | Python/ONNX direkt nutzbar, viel RAM für LiDAR/ICP | Kein harter Determinismus (ohne PREEMPT_RT), hoher Energiebedarf, lange Bootzeit |
+| **Mikrocontroller (MCU)** | STM32 / ESP32 / ATmega | Geringer Energiebedarf, kurze Bootzeit, direkte Hardware-Kontrolle | **ATmega328 (2 KiB SRAM):** Ungeeignet! Policy-Gewichte ($\approx 74\,\text{KiB}$) sprengen Speicher vollkommen.<br>**STM32F401 (96 KiB SRAM):** Int8-Gewichte ($\approx 19\,\text{KiB}$) passen theoretisch, aber ICP/Kamera sprengen RAM.<br>**ESP32-S3 (512 KiB SRAM):** Inferenz machbar, aber komplette Wahrnehmung (LiDAR/Pointcloud) überfordert MCU. |
+| **Heterogene Architektur** | Leistungsrechner + MCU | Perfekte Aufgabentrennung (AMP), Autonomie & Sicherheit entkoppelt | Höhere Systemkomplexität & Bus-Kopplung erforderlich |
 
 ### 3.2 Heterogene Zielarchitektur & Aufgabenverteilung
 
@@ -108,8 +104,8 @@ flowchart LR
 
 | Komponente | Plattform | Hauptaufgaben | Hardware-Features |
 | --- | --- | --- | --- |
-| **Leistungsrechner** | Embedded Linux | Kamera/LiDAR, ICP-Lokalisierung, ONNX-Inferenz, Logging | Multicore, FPU, viel SRAM/Flash |
-| **Sicherheits-Controller** | FreeRTOS MCU | Encoderauswertung, Servo/Motor-PWM, Safety Filter, Watchdog | DMA, Timer, ADC, GPIO, NVIC |
+| **Leistungsrechner** | Embedded Linux | Kamera/LiDAR, ICP-Lokalisierung, ONNX-Inferenz | Multicore, FPU, viel SRAM/Flash |
+| **Sicherheits-Controller** | FreeRTOS | Encoderauswertung, Servo/Motor-PWM, Safety Filter, Watchdog | DMA, Timer, ADC, GPIO, NVIC |
 | **Bus-Kopplung** | CAN / UART | Sichere Signalübertragung mit CRC, Sequenznummer & Timeouts | Hardware-CRC, Transceiver |
 
 -----
@@ -123,8 +119,8 @@ flowchart LR
 | `Safety_Task` | Event / $1\text{--}5\,\text{ms}$ | `Highest` | Direct Interrupt / Semaphore |
 | `Actuator_Task` | $5\text{--}10\,\text{ms}$ | `High` | Queue (Letzter gültiger Sollwert) |
 | `Sensor_Task` | $5\text{--}10\,\text{ms}$ | `High` | DMA / Ringpuffer |
-| `Autonomie_Comm_Task` | $100\,\text{ms}$ | `Medium` | Queue / Mailbox |
-| `Telemetry_Task` | $500\text{--}1000\,\text{ms}$ | `Low` | Stream Buffer / UART |
+| `Autonomie_Comm_Task` | $100\,\text{ms}$ | `Medium` | Queue |
+| `Logging_Task` | $500\text{--}1000\,\text{ms}$ | `Low` | Stream Buffer / UART |
 
 ### 4.2 Software-Schichtenarchitektur
 
@@ -152,17 +148,17 @@ $$\text{PyTorch (PC)} \xrightarrow{\text{Export}} \text{ONNX (Float32)} \xrighta
 | Format | Speicherbedarf Gewichte | Ziel-Laufzeitumgebung |
 | --- | ---: | --- |
 | **Float32 (Baseline)** | $\approx 74\,\text{KiB}$ | ONNX Runtime (Embedded Linux) |
-| **Int8 (Quantisiert)** | $\approx 18\text{--}19\,\text{KiB}$ | CMSIS-NN (MCU) |
+| **Int8 (Quantisiert)** | $\approx 19\,\text{KiB}$ | CMSIS-NN (MCU) |
 
 ### 5.1 Safety Cage um die Policy
-- RL-Policy liefert **nur Wunsch-Sollwerte** (*Requested Setpoints*)
-- **Prüfkriterien des Sicherheitsfilters:**
+- RL-Policy liefert **nur Wunsch-Sollwerte**
+- **Sicherheitsfilter:**
   - Lenkwinkel- & Lenkraten-Begrenzung
   - Geschwindigkeits- & Beschleunigungs-Limits
   - Plausibilitäts-Check ($NaN$- & Ausreißer-Rejektion)
-  - **Datenaktualität (Freshness):** Überprüfung, ob Sensordaten neu und nicht veraltet sind
-  - **Zeitüberschreitungs-Überwachung (Timeout):** Not-Aus bei Kommunikationsabriss
-  - **Emergency Stop:** Sofortige Abschaltung im Fehlerfall
+  - Freshness
+  - Timeout: Not-Aus bei Kommunikationsabriss
+  - Emergency Stop: Sofortige Abschaltung im Fehlerfall
 
 -----
 
@@ -173,7 +169,7 @@ stateDiagram-v2
     [*] --> Boot: Power On
     Boot --> SelfTest: Hardware OK
     SelfTest --> Calibration: Sensors OK
-    Calibration --> Ready: Pose & OpenCV start-line detected
+    Calibration --> Ready: Pose
     Ready --> Driving: Start signal
     Driving --> Ready: Stop
     Driving --> Degraded: Partial sensor failure
@@ -182,13 +178,13 @@ stateDiagram-v2
     SafeStop --> Ready: Reset
 ```
 
-- **Boot:** Memory & driver initialization
-- **SelfTest:** Hardware, sensor & voltage checks
-- **Calibration:** Zero-point alignment (IMU/steering) & **initial localization via OpenCV color detection** (start-line detection & driving direction `CW`/`CCW`)
-- **Ready:** System armed & ready
-- **Driving:** Autonomous operation (**RL inference ONLY active here!**)
-- **Degraded:** Low-speed fallback on partial failure
-- **SafeStop:** E-Stop, safe braking & actuator shutdown
+- **Boot:** Speicher- und Treiberinitialisierung
+- **SelfTest:** Hardware-, Sensor- und Spannungsprüfungen
+- **Calibration:** Nullpunktkalibrierung (IMU/Lenkung) & initiale Lokalisierung per OpenCV-Template-Matching (CW/CCW + Position)
+- **Ready:** System bereit
+- **Driving:** Autonomer Betrieb (**RL-Inferenz nur hier aktiv!**)
+- **Degraded:** Niedriggeschwindigkeits-Fallback bei Teilausfall
+- **SafeStop:** Not-Aus, sicheres Abbremsen & Abschalten der Aktuatoren
 
 -----
 
