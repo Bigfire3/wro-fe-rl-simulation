@@ -188,13 +188,13 @@ stateDiagram-v2
 
 -----
 
-## 7. Verifikation & Test-Pyramide (am Projekt)
+## 7. Verifikation & Tests
 
 | Stufe | Projektbeispiel | Was wird getestet? |
 | --- | --- | --- |
-| **Host-Tests** | Ackermann-Kinematik, Koordinatentransformationen, $15$D-Normalisierung, Clipping-Logik, ONNX-Referenzausgaben | Reine Mathematik & Logik, kein µC nötig, tausende Tests in CI |
-| **On-Target** | Safety-Filter-Grenzwerte auf STM32, PWM-Timing, ADC-Abtastung, Watchdog-Auslösung, CAN-Frame-Integrität | Echter µC, echte Register via JTAG/SWD, verifiziert Firmware-Verhalten |
-| **HIL** | Aufgebocktes Fahrzeug $\rightarrow$ Langsame Geradeausfahrt $\rightarrow$ Kurven $\rightarrow$ Hindernisse $\rightarrow$ Fehlerinjektion auf Teststrecke | Gesamtsystem mit Leistungsrechner + MCU + Sensorik, findet Integrationsfehler |
+| **Host-Tests** | Koordinatentransformationen, $15$D-Normalisierung, Clipping-Logik, ONNX-Referenzausgaben | Reine Mathematik & Logik, kein µC nötig, tausende Tests in CI |
+| **On-Target** | Safety-Filter-Grenzwerte auf STM32, PWM-Timing, ADC-Abtastung, Watchdog-Auslösung | Echter µC, echte Register via JTAG/SWD, verifiziert Firmware-Verhalten |
+| **HIL** | Aufgebocktes Fahrzeug $\rightarrow$ Langsame Geradeausfahrt $\rightarrow$ Kurven $\rightarrow$ Hindernisse | Gesamtsystem mit Leistungsrechner + MCU + Sensorik, findet Integrationsfehler |
 
 -----
 
